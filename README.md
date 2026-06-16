@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/airc-logo.png" alt="Airc Tmux logo" width="120" height="120">
+</p>
+
 # Airc Tmux Remote
 
 Private Android remote display/input for a laptop tmux session. The laptop runs

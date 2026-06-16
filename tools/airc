@@ -1,0 +1,291 @@
+#!/usr/bin/env node
+"use strict";
+
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawn } = require("node:child_process");
+
+const ROOT = path.join(__dirname, "..");
+const SERVER = path.join(ROOT, "src", "server.js");
+const PID_FILE = path.join(ROOT, ".airc-server.pid");
+const STATE_FILE = path.join(ROOT, ".airc-server.json");
+const LOG_FILE = path.join(ROOT, ".airc-server.log");
+const ON_TIMEOUT_MS = 30000;
+
+const { loadConfig, bookmarkUrl, pairingPayload } = require(path.join(ROOT, "src", "config"));
+
+function usage(exitCode = 0) {
+  console.log(`Usage: tools/airc COMMAND [options]
+
+Commands:
+  on [server args]       start the tmux remote server using config defaults
+  local [server args]    start for same-WLAN phone access (--host 0.0.0.0 --no-ngrok)
+  off                    stop the background server
+  restart [server args]  stop then start
+  status [--json]        show process and /healthz state
+  url                    print configured bookmark URL
+  pair                   print pairing QR/JSON
+  logs                   print the background server log path
+
+Examples:
+  tools/airc local --session swyd
+  tools/airc on --session swyd
+  tools/airc off
+`);
+  process.exit(exitCode);
+}
+
+function readPid() {
+  try {
+    const pid = Number(fs.readFileSync(PID_FILE, "utf8").trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function processAlive(pid) {
+  if (!pid) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function activePid() {
+  const pid = readPid();
+  if (processAlive(pid)) {
+    return pid;
+  }
+  try {
+    fs.unlinkSync(PID_FILE);
+  } catch {
+    // Already gone.
+  }
+  try {
+    fs.unlinkSync(STATE_FILE);
+  } catch {
+    // Already gone.
+  }
+  return 0;
+}
+
+function writeState(pid, serverArgs, config) {
+  fs.writeFileSync(STATE_FILE, `${JSON.stringify({
+    pid,
+    serverArgs,
+    port: config.port,
+    startedAt: new Date().toISOString(),
+  }, null, 2)}\n`);
+}
+
+function readState() {
+  try {
+    return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function activeConfig() {
+  const state = readState();
+  return load(state?.serverArgs || []);
+}
+
+async function healthz(port) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+    if (!response.ok) {
+      return null;
+    }
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+async function authenticatedJson(config, pathname) {
+  const response = await fetch(`http://127.0.0.1:${config.port}${pathname}`, {
+    headers: { "X-Airc-Auth": config.authToken },
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+function printPairing(payload) {
+  const encoded = JSON.stringify(payload);
+  try {
+    require("qrcode-terminal").generate(encoded, { small: true });
+  } catch {
+    // JSON is enough for manual setup if QR rendering is unavailable.
+  }
+  console.log(JSON.stringify(payload, null, 2));
+}
+
+function load(argv = []) {
+  try {
+    return loadConfig(argv).config;
+  } catch (error) {
+    console.error(`airc: failed to load config: ${error.message}`);
+    process.exit(1);
+  }
+}
+
+async function cmdOn(extraArgs, mode = "on") {
+  const serverArgs = mode === "local"
+    ? ["--host", "0.0.0.0", "--no-ngrok", ...extraArgs]
+    : extraArgs;
+  const config = load(serverArgs);
+  const pid = activePid();
+  if (pid) {
+    const health = await healthz(config.port);
+    console.log(`airc: already on (pid ${pid}${health?.session ? `, session: ${health.session}` : ""})`);
+    return;
+  }
+
+  const log = fs.openSync(LOG_FILE, "a");
+  const child = spawn(process.execPath, [SERVER, ...serverArgs], {
+    cwd: ROOT,
+    detached: true,
+    stdio: ["ignore", log, log],
+  });
+  child.unref();
+  fs.writeFileSync(PID_FILE, `${child.pid}\n`);
+  writeState(child.pid, serverArgs, config);
+
+  const deadline = Date.now() + ON_TIMEOUT_MS;
+  let health = null;
+  while (Date.now() < deadline) {
+    if (!processAlive(child.pid)) {
+      console.error(`airc: server exited early; see ${LOG_FILE}`);
+      process.exit(1);
+    }
+    health = await healthz(config.port);
+    if (health && (!config.ngrok.enabled || health.ngrok.url)) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  if (!health) {
+    console.error(`airc: started pid ${child.pid}, but /healthz did not respond; see ${LOG_FILE}`);
+    process.exit(1);
+  }
+  console.log(`airc: on (pid ${child.pid}, session: ${health.session}${health.tmuxOk ? "" : " - tmux session MISSING"})`);
+  if (config.ngrok.enabled && !health.ngrok.url) {
+    console.error(`airc: tunnel not up yet; see ${LOG_FILE}`);
+    process.exit(1);
+  }
+  console.log(`bookmark: ${bookmarkUrl(config)}`);
+  try {
+    const payload = await authenticatedJson(config, "/api/pairing");
+    console.log(`pair baseUrl: ${payload.baseUrl}`);
+    if (payload.lanUrls?.length) {
+      console.log(`lan: ${payload.lanUrls.join(", ")}`);
+    }
+  } catch {
+    // Non-fatal; the server is up.
+  }
+}
+
+function cmdOff() {
+  const pid = activePid();
+  if (!pid) {
+    console.log("airc: off");
+    return;
+  }
+  process.kill(pid, "SIGTERM");
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && processAlive(pid)) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  }
+  if (processAlive(pid)) {
+    console.error(`airc: pid ${pid} did not exit after SIGTERM`);
+    process.exit(1);
+  }
+  try {
+    fs.unlinkSync(PID_FILE);
+  } catch {
+    // Already gone.
+  }
+  try {
+    fs.unlinkSync(STATE_FILE);
+  } catch {
+    // Already gone.
+  }
+  console.log("airc: off");
+}
+
+async function cmdStatus(json) {
+  const config = activeConfig();
+  const pid = activePid();
+  const health = pid ? await healthz(config.port) : null;
+  if (json) {
+    console.log(JSON.stringify({ active: Boolean(pid), pid, health, log: LOG_FILE }));
+    process.exit(pid ? 0 : 1);
+  }
+  if (!pid) {
+    console.log("airc: off");
+    process.exit(1);
+  }
+  if (!health) {
+    console.log(`airc: pid ${pid} active but /healthz not responding | log: ${LOG_FILE}`);
+    process.exit(1);
+  }
+  console.log([
+    `airc: ${health.ok ? "on" : "on (degraded)"}`,
+    `pid: ${pid}`,
+    `session: ${health.session}${health.tmuxOk ? "" : " (missing)"}`,
+    `tunnel: ${health.ngrok.url || "none"}`,
+    `viewers: ${health.viewersLastMin}`,
+    `log: ${LOG_FILE}`,
+  ].join(" | "));
+}
+
+async function cmdPair() {
+  const config = activeConfig();
+  if (activePid()) {
+    try {
+      printPairing(await authenticatedJson(config, "/api/pairing"));
+      return;
+    } catch {
+      // Fall back to static config payload below.
+    }
+  }
+  printPairing(pairingPayload(config));
+}
+
+async function main() {
+  const [command, ...rest] = process.argv.slice(2);
+  if (!command || command === "-h" || command === "--help") {
+    usage(0);
+  }
+  if (command === "on") {
+    await cmdOn(rest, "on");
+  } else if (command === "local") {
+    await cmdOn(rest, "local");
+  } else if (command === "off") {
+    cmdOff();
+  } else if (command === "restart") {
+    cmdOff();
+    await cmdOn(rest, "on");
+  } else if (command === "status") {
+    await cmdStatus(rest.includes("--json"));
+  } else if (command === "url") {
+    console.log(bookmarkUrl(activeConfig()));
+  } else if (command === "pair") {
+    await cmdPair();
+  } else if (command === "logs") {
+    console.log(LOG_FILE);
+  } else {
+    usage(1);
+  }
+}
+
+main();

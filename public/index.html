@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>airc tmux remote</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body class="theme-dark">
+  <header id="strip">
+    <span id="dot" class="dot"></span>
+    <span id="state">connecting</span>
+    <button id="pane-label" title="pick pane">...</button>
+    <span id="note"></span>
+    <span class="spacer"></span>
+    <button id="font-minus">A-</button>
+    <button id="font-plus">A+</button>
+    <button id="font-fit" class="active">Fit</button>
+    <button id="theme-toggle">day</button>
+    <button id="pause-toggle">pause</button>
+  </header>
+  <main id="term-wrap">
+    <pre id="term"></pre>
+    <div id="cursor" hidden></div>
+  </main>
+  <div id="picker" hidden>
+    <div id="picker-box">
+      <div id="picker-title">panes</div>
+      <div id="picker-list"></div>
+      <button id="picker-close">close</button>
+    </div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

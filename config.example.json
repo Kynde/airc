@@ -1,0 +1,17 @@
+{
+  "host": "127.0.0.1",
+  "port": 8080,
+  "session": "swyd",
+  "pollMs": 700,
+  "pollIdleMaxMs": 2500,
+  "authToken": "",
+  "fontSizeDefault": 13,
+  "theme": "dark",
+  "resizeToViewport": false,
+  "ngrok": {
+    "enabled": true,
+    "domain": "carrousel-value-recipient.ngrok-free.dev",
+    "binary": "ngrok",
+    "apiUrl": "http://127.0.0.1:4040"
+  }
+}

@@ -1,0 +1,133 @@
+"use strict";
+
+const { execFile } = require("node:child_process");
+
+function run(args, timeout = 1500) {
+  return new Promise((resolve) => {
+    execFile("tmux", args, { timeout, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        resolve({ ok: false, stdout: "", error: stderr.trim() || error.message });
+        return;
+      }
+      resolve({ ok: true, stdout, error: "" });
+    });
+  });
+}
+
+const META_FORMAT = [
+  "#{pane_id}",
+  "#{window_id}",
+  "#{window_index}",
+  "#{window_name}",
+  "#{pane_index}",
+  "#{pane_title}",
+  "#{pane_width}",
+  "#{pane_height}",
+  "#{cursor_x}",
+  "#{cursor_y}",
+].join("\t");
+
+function parseMeta(line) {
+  const parts = line.split("\t");
+  if (parts.length < 10 || !parts[0].startsWith("%")) {
+    return null;
+  }
+  return {
+    paneId: parts[0],
+    windowId: parts[1],
+    windowIndex: Number(parts[2]),
+    windowName: parts[3],
+    paneIndex: Number(parts[4]),
+    paneTitle: parts[5],
+    width: Number(parts[6]),
+    height: Number(parts[7]),
+    cursorX: Number(parts[8]),
+    cursorY: Number(parts[9]),
+  };
+}
+
+async function paneMeta(target) {
+  const result = await run(["display-message", "-p", "-t", target, "-F", META_FORMAT]);
+  if (!result.ok) {
+    return null;
+  }
+  return parseMeta(result.stdout.split("\n")[0]);
+}
+
+async function activePane(session) {
+  return paneMeta(`=${session}:`);
+}
+
+async function capturePane(paneId) {
+  const result = await run(["capture-pane", "-p", "-e", "-t", paneId]);
+  if (!result.ok) {
+    return { ok: false, text: "", error: result.error };
+  }
+  return { ok: true, text: result.stdout.replace(/\s+$/u, ""), error: "" };
+}
+
+async function listPanes(session) {
+  const format = [
+    "#{pane_id}",
+    "#{window_index}",
+    "#{window_name}",
+    "#{pane_index}",
+    "#{pane_title}",
+    "#{pane_width}",
+    "#{pane_height}",
+    "#{window_active}#{pane_active}",
+  ].join("\t");
+  const result = await run(["list-panes", "-s", "-t", `=${session}`, "-F", format]);
+  if (!result.ok) {
+    return null;
+  }
+  return result.stdout.split("\n").filter(Boolean).map((line) => {
+    const parts = line.split("\t");
+    return {
+      paneId: parts[0],
+      windowIndex: Number(parts[1]),
+      windowName: parts[2],
+      paneIndex: Number(parts[3]),
+      paneTitle: parts[4],
+      width: Number(parts[5]),
+      height: Number(parts[6]),
+      active: parts[7] === "11",
+    };
+  });
+}
+
+async function sessionExists(session) {
+  const result = await run(["has-session", "-t", `=${session}`]);
+  return result.ok;
+}
+
+async function resizeWindow(windowId, cols, rows) {
+  const result = await run(["resize-window", "-t", windowId, "-x", String(cols), "-y", String(rows)]);
+  return result.ok;
+}
+
+async function sendText(target, text) {
+  const result = await run(["send-keys", "-t", target, "-l", text], 2500);
+  return result.ok ? { ok: true, error: "" } : { ok: false, error: result.error };
+}
+
+const ALLOWED_KEYS = new Set(["Enter", "Up", "Down", "Left", "Right", "Tab", "Escape", "Space", "Backspace", "C-c"]);
+
+async function sendKey(target, key) {
+  if (!ALLOWED_KEYS.has(key)) {
+    return { ok: false, error: `unsupported key: ${key}` };
+  }
+  const result = await run(["send-keys", "-t", target, key], 2500);
+  return result.ok ? { ok: true, error: "" } : { ok: false, error: result.error };
+}
+
+module.exports = {
+  activePane,
+  paneMeta,
+  capturePane,
+  listPanes,
+  sessionExists,
+  resizeWindow,
+  sendText,
+  sendKey,
+};

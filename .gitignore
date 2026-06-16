@@ -1,1 +1,11 @@
-*.sp?
+config.json
+.airc-server.pid
+.airc-server.json
+.airc-server.log
+node_modules/
+android-app/.gradle/
+android-app/local.properties
+android-app/build/
+android-app/app/build/
+*.apk
+*.aab

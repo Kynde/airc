@@ -4,15 +4,15 @@
 
 # Airc Tmux Remote
 
-Allows user to control a tmux session, typically an AI coding tool (codex, claude code, etc) using a phone.
+AI remote control for a tmux session, typically an AI coding tool (codex, claude code, etc) using a phone or browser.
 Kind of like the claude remote control, but actually works and not strictly tied to any specific AI tool.
 
 ## Overview
 
-Private Android remote display/input for a laptop tmux session. The laptop runs
-a small Node server that captures tmux panes and accepts authenticated input;
-the phone runs a native Kotlin app with a WebView terminal, pane picker, Android
-keyboard input, and quick keys.
+Private remote display/input for a laptop tmux session. The laptop runs a small
+Node server that captures tmux panes, serves a browser viewer, and accepts
+authenticated input only from control tokens. The Android app stores both LAN
+and public endpoints when paired and can fall back between them.
 
 ## Quick Start
 
@@ -20,7 +20,7 @@ Start a same-WLAN server for a tmux session:
 
 ```sh
 tools/airc local --session airc
-tools/airc pair
+tools/airc pair-app
 ```
 
 Then open **Airc Tmux** on the phone, tap `pair`, and scan the QR. The app
@@ -31,7 +31,9 @@ Useful commands:
 
 ```sh
 tools/airc status
-tools/airc pair
+tools/airc pair-app
+tools/airc pair-web
+tools/airc pair-web-control
 tools/airc off
 tools/airc logs
 ```
@@ -41,8 +43,10 @@ Use `tools/airc on --session airc` for configured ngrok mode. Use
 network; local mode binds `0.0.0.0`, disables ngrok, and makes the QR prefer a
 LAN URL instead of `127.0.0.1`.
 
-Airc defaults to port `8090` so it can run alongside `../swyd`, which defaults
-to `8080`.
+Airc uses two tokens. `viewToken` can view only. `controlToken` can view and
+send tmux input from the Android app or trusted browser UI. `pair-web` prints a
+QR/URL with the view token; `pair-web-control` prints one with the control
+token.
 
 ## Android App
 
@@ -55,6 +59,14 @@ The app has:
 - quick keys for Up, Down, Enter
 - `A-` / `A+` app-side font adjustment
 - QR or manual pairing
+- LAN/public endpoint fallback from one pairing payload
+
+## Browser Viewer
+
+The browser viewer is the merged Swyd-style interface: active-pane following,
+pinning, theme, pause, font fit/manual sizing, and ETag polling. With a
+`viewToken` it is read-only. With a `controlToken` it also shows text, Up, Down,
+and Enter controls that target the currently viewed pane.
 
 For Samsung S23 portrait, a tmux size around `58x50` has worked well. Tmux
 window size is the main readability lever; the app then fits that grid into the

@@ -10,13 +10,13 @@
 - `tools/airc`: background server wrapper
 - `android-app/`: native Kotlin Android client
 
-The app renders terminal frames in a WebView and keeps controls native. This
-keeps ANSI rendering shared with the web viewer while preserving Android
-keyboard/dictation behavior.
+The browser viewer is the canonical Swyd-style terminal UI. The Android app
+renders terminal frames in a WebView and keeps controls native, while sharing
+the same server frame/input APIs.
 
 ## Ports And Pairing
 
-Airc defaults to `8090` to avoid `../swyd`, which defaults to `8080`.
+Airc defaults to `8080`.
 
 Local mode:
 
@@ -34,7 +34,9 @@ Pairing payload behavior:
 
 - ngrok mode: `baseUrl` is the configured/public ngrok URL.
 - local mode: `baseUrl` prefers the first LAN URL.
-- `lanUrls` is included for fallback/manual handling.
+- `lanUrls` and `publicUrl` are included so Android can try LAN first and fall
+  back to ngrok/public access.
+- Browser pairing commands print QR/URL/token values instead of Android JSON.
 
 ## Server API
 
@@ -43,14 +45,22 @@ Pairing payload behavior:
 - `GET /api/tmux/frame`
 - `GET /api/tmux/panes`
 - `POST /api/tmux/input`
+- `GET /probe`
+- `GET /api/probe/poll`
 - `GET /healthz`
 
-Auth uses the generated token in `config.json`. Requests can use:
+Auth uses generated tokens in `config.json`. `viewToken` can view only;
+`controlToken` can view and send input. Requests can use:
 
 - `?k=<token>`
 - `X-Airc-Auth: <token>`
+- `X-Swyd-Auth: <token>` during migration
 - `Authorization: Bearer <token>`
 - `airc_auth` cookie
+
+`GET /api/config` returns `canControl` based on the token presented. Browser UI
+controls are shown only when `canControl` is true. `/api/tmux/input` and
+`/api/pairing` require the control token and return `404` otherwise.
 
 Input payloads:
 

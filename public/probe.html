@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Airc browser probe</title>
+  <style>
+    @font-face {
+      font-family: "Airc Fira Code";
+      src: url("/fonts/FiraCode-Regular.ttf") format("truetype");
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+    :root {
+      color-scheme: dark;
+      font-family: "Airc Fira Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #101314;
+      color: #d7e1df;
+    }
+    body { margin: 0; padding: 24px; }
+    main { max-width: 980px; margin: 0 auto; }
+    h1 { font-size: clamp(24px, 5vw, 44px); margin: 0 0 20px; }
+    nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+    button {
+      min-height: 44px;
+      border: 1px solid #30403d;
+      border-radius: 6px;
+      background: #171d1c;
+      color: #d7e1df;
+      font: inherit;
+      padding: 0 14px;
+    }
+    button.active { border-color: #49d17d; color: #49d17d; }
+    section { display: none; border-top: 1px solid #30403d; padding: 18px 0; }
+    section.active { display: block; }
+    h2 { font-size: 18px; margin: 0 0 12px; }
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 0;
+      line-height: 1.45;
+      font-size: clamp(12px, 2vw, 16px);
+    }
+    .ok { color: #49d17d; }
+    .bad { color: #ff7070; }
+    .sample {
+      background: #050707;
+      border: 1px solid #30403d;
+      border-radius: 6px;
+      margin: 12px 0;
+      overflow: auto;
+      padding: 14px;
+    }
+    .mono-css {
+      font-family: "Airc Fira Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .monospace-css { font-family: monospace; }
+    .courier-css { font-family: "Courier New", Courier, monospace; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Airc browser probe</h1>
+    <nav>
+      <button class="active" data-tab="browser">Browser</button>
+      <button data-tab="polling">Polling</button>
+      <button data-tab="rendering">Rendering</button>
+      <button data-tab="storage">Storage</button>
+    </nav>
+    <section id="tab-browser" class="active">
+      <h2>Browser</h2>
+      <pre id="browser"></pre>
+    </section>
+    <section id="tab-storage">
+      <h2>Storage</h2>
+      <pre id="storage"></pre>
+    </section>
+    <section id="tab-polling">
+      <h2>HTTP polling</h2>
+      <pre id="polling">Running...</pre>
+    </section>
+    <section id="tab-rendering">
+      <h2>Rendering</h2>
+      <pre id="rendering"></pre>
+      <pre id="ansi-sample" class="sample mono-css"><span style="color:#49d17d">green</span> <span style="color:#58a6ff">blue</span> <span style="color:#ff7070">red</span> <strong>bold</strong>
+box: +----------------+
+     | terminal probe |
+     +----------------+
+drawing: ┌─┬─┐ ╭─╮ ▁▂▃▄▅▆▇█ ⠋⠙⠹ ✻ ✶ ●
+long line: abcdefghijklmnopqrstuvwxyz-abcdefghijklmnopqrstuvwxyz-abcdefghijklmnopqrstuvwxyz</pre>
+      <pre class="sample mono-css">bundled Fira Code
+iiiiiiiiii
+MMMMMMMMMM
+1111111111
+||||||||||
++--------+
+| align? |
++--------+</pre>
+      <pre class="sample monospace-css">generic monospace
+iiiiiiiiii
+MMMMMMMMMM
+1111111111
+||||||||||
++--------+
+| align? |
++--------+</pre>
+      <pre class="sample courier-css">Courier New stack
+iiiiiiiiii
+MMMMMMMMMM
+1111111111
+||||||||||
++--------+
+| align? |
++--------+</pre>
+    </section>
+  </main>
+  <script>
+    const startedAt = performance.now();
+
+    for (const button of document.querySelectorAll("button[data-tab]")) {
+      button.addEventListener("click", () => {
+        for (const item of document.querySelectorAll("button[data-tab]")) {
+          item.classList.toggle("active", item === button);
+        }
+        for (const section of document.querySelectorAll("section[id^='tab-']")) {
+          section.classList.toggle("active", section.id === `tab-${button.dataset.tab}`);
+        }
+      });
+    }
+
+    function write(id, lines) {
+      document.getElementById(id).textContent = lines.join("\n");
+    }
+
+    function mark(id, ok) {
+      const node = document.getElementById(id);
+      node.classList.toggle("ok", ok);
+      node.classList.toggle("bad", !ok);
+    }
+
+    function rectLine(label, element) {
+      const rect = element.getBoundingClientRect();
+      return `${label}: ${Math.round(rect.width)}x${Math.round(rect.height)} css px`;
+    }
+
+    function updateDimensions() {
+      const visual = window.visualViewport;
+      const ansiSample = document.getElementById("ansi-sample");
+      const main = document.querySelector("main");
+      write("browser", [
+        `url: ${location.href}`,
+        `userAgent: ${navigator.userAgent}`,
+        `viewport css px: ${innerWidth}x${innerHeight}`,
+        `viewport physical px estimate: ${Math.round(innerWidth * devicePixelRatio)}x${Math.round(innerHeight * devicePixelRatio)}`,
+        `visualViewport: ${visual ? Math.round(visual.width) + "x" + Math.round(visual.height) : "unavailable"}`,
+        `screen css px: ${screen.width}x${screen.height}`,
+        `available screen css px: ${screen.availWidth}x${screen.availHeight}`,
+        `devicePixelRatio: ${devicePixelRatio}`,
+        rectLine("main content box", main),
+        rectLine("render sample box", ansiSample),
+        `estimated 14px cells in sample: ${Math.floor(ansiSample.clientWidth / 8.4)}x${Math.floor(ansiSample.clientHeight / 18)}`,
+        `language: ${navigator.language}`,
+        `cookieEnabled: ${navigator.cookieEnabled}`,
+        `fetch: ${"fetch" in window}`,
+        `WebSocket API: ${"WebSocket" in window}`,
+        `EventSource API: ${"EventSource" in window}`,
+      ]);
+      write("rendering", [
+        `startup ms: ${Math.round(performance.now() - startedAt)}`,
+        `viewport css px: ${innerWidth}x${innerHeight}`,
+        rectLine("render sample box", ansiSample),
+        "Check visual fit, text size, monospace alignment, wrapping, and contrast.",
+      ]);
+    }
+
+    updateDimensions();
+    window.addEventListener("resize", updateDimensions);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", updateDimensions);
+    }
+
+    try {
+      localStorage.setItem("airc_probe", String(Date.now()));
+      document.cookie = "airc_probe=1; max-age=3600; SameSite=Lax";
+      write("storage", [
+        "localStorage: ok",
+        `cookie write visible: ${document.cookie.includes("airc_probe=1")}`,
+      ]);
+      mark("storage", true);
+    } catch (error) {
+      write("storage", [`storage failed: ${error.message}`]);
+      mark("storage", false);
+    }
+
+    async function pollProbe() {
+      const samples = [];
+      for (let index = 1; index <= 10; index += 1) {
+        const before = performance.now();
+        const response = await fetch(`/api/probe/poll?event=${index}&t=${Date.now()}`, { cache: "no-store" });
+        const payload = await response.json();
+        samples.push({
+          event: payload.event_number,
+          ms: Math.round(performance.now() - before),
+          serverTime: payload.server_time,
+        });
+        write("polling", samples.map((sample) => `#${sample.event} ${sample.ms} ms ${sample.serverTime}`));
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      mark("polling", true);
+    }
+
+    pollProbe().catch((error) => {
+      write("polling", [`polling failed: ${error.message}`]);
+      mark("polling", false);
+    });
+  </script>
+</body>
+</html>

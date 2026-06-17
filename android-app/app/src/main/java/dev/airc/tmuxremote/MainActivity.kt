@@ -38,7 +38,9 @@ data class Profile(
     val name: String,
     val baseUrl: String,
     val token: String,
-    val session: String
+    val session: String,
+    val publicUrl: String = "",
+    val lanUrls: List<String> = emptyList()
 )
 
 data class Pane(
@@ -93,7 +95,9 @@ class MainActivity : ComponentActivity() {
             prefs.getString("name", "Laptop tmux") ?: "Laptop tmux",
             baseUrl.trimEnd('/'),
             token,
-            prefs.getString("session", "") ?: ""
+            prefs.getString("session", "") ?: "",
+            prefs.getString("publicUrl", "") ?: "",
+            parseStoredUrls(prefs.getString("lanUrls", "[]") ?: "[]")
         )
     }
 
@@ -104,6 +108,8 @@ class MainActivity : ComponentActivity() {
             .putString("baseUrl", profile!!.baseUrl)
             .putString("token", profile!!.token)
             .putString("session", profile!!.session)
+            .putString("publicUrl", profile!!.publicUrl.trimEnd('/'))
+            .putString("lanUrls", JSONArray(profile!!.lanUrls.map { it.trimEnd('/') }).toString())
             .apply()
         etag = null
         status.text = "paired"
@@ -254,33 +260,46 @@ class MainActivity : ComponentActivity() {
         thread {
             try {
                 val query = if (pinnedPane.isNotBlank()) "?pane=${URLEncoder.encode(pinnedPane, "UTF-8")}" else ""
-                val connection = (URL("${current.baseUrl}/api/tmux/frame$query").openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    setRequestProperty("X-Airc-Auth", current.token)
-                    etag?.let { setRequestProperty("If-None-Match", it) }
-                    connectTimeout = 4000
-                    readTimeout = 6000
-                }
-                val code = connection.responseCode
-                if (code == 304) {
-                    postStatus("idle")
-                } else if (code in 200..299) {
-                    etag = connection.getHeaderField("ETag")
-                    val json = connection.inputStream.bufferedReader().readText()
-                    val frame = JSONObject(json)
-                    if (frame.optBoolean("ok")) {
-                        val label = if (pinnedPane.isBlank()) "active" else "pin ${frame.optString("paneId")}"
-                        handler.post {
-                            paneButton.text = label
-                            status.text = "live"
-                            webView.evaluateJavascript("render(${frame.toString()})", null)
+                var handled = false
+                var lastError = "offline"
+                for (baseUrl in endpointUrls(current)) {
+                    try {
+                        val connection = (URL("$baseUrl/api/tmux/frame$query").openConnection() as HttpURLConnection).apply {
+                            requestMethod = "GET"
+                            setRequestProperty("X-Airc-Auth", current.token)
+                            etag?.let { setRequestProperty("If-None-Match", it) }
+                            connectTimeout = 2500
+                            readTimeout = 6000
                         }
-                    } else {
-                        postStatus(frame.optString("error", "error"))
+                        val code = connection.responseCode
+                        if (code == 304) {
+                            postStatus("idle")
+                            handled = true
+                            break
+                        } else if (code in 200..299) {
+                            etag = connection.getHeaderField("ETag")
+                            val json = connection.inputStream.bufferedReader().readText()
+                            val frame = JSONObject(json)
+                            if (frame.optBoolean("ok")) {
+                                val label = if (pinnedPane.isBlank()) "active" else "pin ${frame.optString("paneId")}"
+                                handler.post {
+                                    paneButton.text = label
+                                    status.text = "live"
+                                    webView.evaluateJavascript("render(${frame.toString()})", null)
+                                }
+                            } else {
+                                postStatus(frame.optString("error", "error"))
+                            }
+                            handled = true
+                            break
+                        } else {
+                            lastError = "HTTP $code"
+                        }
+                    } catch (error: Exception) {
+                        lastError = error.message ?: "offline"
                     }
-                } else {
-                    postStatus("HTTP $code")
                 }
+                if (!handled) postStatus(lastError)
             } catch (error: Exception) {
                 postStatus(error.message ?: "offline")
             } finally {
@@ -313,62 +332,87 @@ class MainActivity : ComponentActivity() {
             payload.put("paneId", pinnedPane)
         }
         thread {
+            var sent = false
+            var lastError = "send failed"
             try {
                 val body = payload.toString()
-                val connection = (URL("${current.baseUrl}/api/tmux/input").openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    setRequestProperty("X-Airc-Auth", current.token)
-                    connectTimeout = 4000
-                    readTimeout = 6000
+                for (baseUrl in endpointUrls(current)) {
+                    try {
+                        val connection = (URL("$baseUrl/api/tmux/input").openConnection() as HttpURLConnection).apply {
+                            requestMethod = "POST"
+                            doOutput = true
+                            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                            setRequestProperty("X-Airc-Auth", current.token)
+                            connectTimeout = 2500
+                            readTimeout = 6000
+                        }
+                        OutputStreamWriter(connection.outputStream, StandardCharsets.UTF_8).use { it.write(body) }
+                        val code = connection.responseCode
+                        if (code in 200..299) {
+                            postStatus("sent")
+                            etag = null
+                            sent = true
+                            break
+                        }
+                        lastError = "send $code"
+                    } catch (error: Exception) {
+                        lastError = error.message ?: "send failed"
+                    }
                 }
-                OutputStreamWriter(connection.outputStream, StandardCharsets.UTF_8).use { it.write(body) }
-                val code = connection.responseCode
-                postStatus(if (code in 200..299) "sent" else "send $code")
-                etag = null
             } catch (error: Exception) {
-                postStatus(error.message ?: "send failed")
+                lastError = error.message ?: "send failed"
             }
+            if (!sent) postStatus(lastError)
         }
     }
 
     private fun showPanePicker() {
         val current = profile ?: return
         thread {
+            var loaded = false
+            var lastError = "panes failed"
             try {
-                val connection = (URL("${current.baseUrl}/api/tmux/panes").openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    setRequestProperty("X-Airc-Auth", current.token)
-                    connectTimeout = 4000
-                    readTimeout = 6000
-                }
-                val payload = JSONObject(connection.inputStream.bufferedReader().readText())
-                val panes = mutableListOf(Pane("", "Follow active pane", pinnedPane.isBlank()))
-                val arr: JSONArray = payload.optJSONArray("panes") ?: JSONArray()
-                for (i in 0 until arr.length()) {
-                    val item = arr.getJSONObject(i)
-                    val id = item.getString("paneId")
-                    panes.add(Pane(
-                        id,
-                        "${if (item.optBoolean("active")) "* " else ""}${item.optInt("windowIndex")}:${item.optString("windowName")}.${item.optInt("paneIndex")} (${item.optInt("width")}x${item.optInt("height")})",
-                        pinnedPane == id
-                    ))
-                }
-                handler.post {
-                    AlertDialog.Builder(this)
-                        .setTitle("Panes")
-                        .setItems(panes.map { it.label }.toTypedArray()) { _, which ->
-                            pinnedPane = panes[which].paneId
-                            prefs().edit().putString("pinnedPane", pinnedPane).apply()
-                            etag = null
-                            paneButton.text = if (pinnedPane.isBlank()) "active" else panes[which].label
+                for (baseUrl in endpointUrls(current)) {
+                    try {
+                        val connection = (URL("$baseUrl/api/tmux/panes").openConnection() as HttpURLConnection).apply {
+                            requestMethod = "GET"
+                            setRequestProperty("X-Airc-Auth", current.token)
+                            connectTimeout = 2500
+                            readTimeout = 6000
                         }
-                        .show()
+                        val payload = JSONObject(connection.inputStream.bufferedReader().readText())
+                        val panes = mutableListOf(Pane("", "Follow active pane", pinnedPane.isBlank()))
+                        val arr: JSONArray = payload.optJSONArray("panes") ?: JSONArray()
+                        for (i in 0 until arr.length()) {
+                            val item = arr.getJSONObject(i)
+                            val id = item.getString("paneId")
+                            panes.add(Pane(
+                                id,
+                                "${if (item.optBoolean("active")) "* " else ""}${item.optInt("windowIndex")}:${item.optString("windowName")}.${item.optInt("paneIndex")} (${item.optInt("width")}x${item.optInt("height")})",
+                                pinnedPane == id
+                            ))
+                        }
+                        handler.post {
+                            AlertDialog.Builder(this)
+                                .setTitle("Panes")
+                                .setItems(panes.map { it.label }.toTypedArray()) { _, which ->
+                                    pinnedPane = panes[which].paneId
+                                    prefs().edit().putString("pinnedPane", pinnedPane).apply()
+                                    etag = null
+                                    paneButton.text = if (pinnedPane.isBlank()) "active" else panes[which].label
+                                }
+                                .show()
+                        }
+                        loaded = true
+                        break
+                    } catch (error: Exception) {
+                        lastError = error.message ?: "panes failed"
+                    }
                 }
             } catch (error: Exception) {
-                postStatus(error.message ?: "panes failed")
+                lastError = error.message ?: "panes failed"
             }
+            if (!loaded) postStatus(lastError)
         }
     }
 
@@ -429,7 +473,9 @@ class MainActivity : ComponentActivity() {
                 json.optString("name", "Laptop tmux"),
                 preferredBaseUrl,
                 json.getString("token"),
-                json.optString("session", "")
+                json.optString("session", ""),
+                json.optString("publicUrl", configuredBaseUrl),
+                jsonArrayToList(lanUrls)
             )
         } else {
             val url = URL(trimmed)
@@ -437,7 +483,33 @@ class MainActivity : ComponentActivity() {
                 val parts = it.split("=", limit = 2)
                 if (parts.size == 2) parts[0] to java.net.URLDecoder.decode(parts[1], "UTF-8") else null
             }.toMap()
-            Profile("Laptop tmux", "${url.protocol}://${url.authority}", params["k"] ?: "", "")
+            val baseUrl = "${url.protocol}://${url.authority}"
+            Profile("Laptop tmux", baseUrl, params["k"] ?: "", "", baseUrl)
+        }
+    }
+
+    private fun endpointUrls(current: Profile): List<String> {
+        return (current.lanUrls + current.baseUrl + current.publicUrl)
+            .map { it.trim().trimEnd('/') }
+            .filter { it.isNotBlank() }
+            .distinct()
+    }
+
+    private fun jsonArrayToList(array: JSONArray?): List<String> {
+        val out = mutableListOf<String>()
+        if (array == null) return out
+        for (i in 0 until array.length()) {
+            val value = array.optString(i, "").trim().trimEnd('/')
+            if (value.isNotBlank()) out.add(value)
+        }
+        return out
+    }
+
+    private fun parseStoredUrls(raw: String): List<String> {
+        return try {
+            jsonArrayToList(JSONArray(raw))
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 

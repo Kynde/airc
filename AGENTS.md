@@ -13,7 +13,7 @@ public product.
 
 Important behavior:
 
-- Airc defaults to port `8090`; `../swyd` defaults to `8080`.
+- Airc defaults to port `8080`.
 - `tools/airc local` prepends `--host 0.0.0.0 --no-ngrok`.
 - Pairing payloads in local mode should prefer LAN URLs over `127.0.0.1`.
 - The app follows the active pane unless the user pins a pane.

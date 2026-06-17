@@ -100,6 +100,37 @@ body {
   white-space: pre;
   color: var(--fg);
 }
+#control-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--chrome);
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+#control-bar[hidden] { display: none; }
+#control-text {
+  min-width: 0;
+  flex: 1;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--term-bg);
+  color: var(--fg);
+  font: inherit;
+  padding: 0 10px;
+}
+#control-bar button {
+  min-height: 42px;
+  min-width: 58px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  padding: 0 10px;
+}
 #cursor {
   position: absolute;
   background: var(--fg);

@@ -7,8 +7,8 @@ const http = require("node:http");
 const path = require("node:path");
 
 const { ansiToHtml } = require("./ansi");
-const { isAuthorized, authCookie, tokenEquals } = require("./auth");
-const { loadConfig, bookmarkUrl, pairingPayload } = require("./config");
+const { authLevel, authCookie, tokenEquals } = require("./auth");
+const { loadConfig, bookmarkUrl, pairingPayload, localLanAddresses } = require("./config");
 const { startNgrok } = require("./ngrok");
 const tmux = require("./tmux");
 
@@ -48,7 +48,7 @@ function printPairing(payload) {
   console.log(JSON.stringify(payload, null, 2));
 }
 
-function sendFile(response, fileName, contentType, cacheControl) {
+function sendFile(response, fileName, contentType, cacheControl, extraHeaders = {}) {
   fs.readFile(path.join(PUBLIC_DIR, fileName), (error, body) => {
     if (error) {
       notFound(response);
@@ -58,6 +58,7 @@ function sendFile(response, fileName, contentType, cacheControl) {
       "Content-Type": contentType,
       "Content-Length": body.length,
       "Cache-Control": cacheControl,
+      ...extraHeaders,
     });
     response.end(body);
   });
@@ -288,7 +289,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       return;
     }
 
-    const authorized = isAuthorized(request, url, config.authToken);
+    const auth = authLevel(request, url, config);
+    const authorized = auth.level !== "none";
+    const canControl = auth.level === "control";
 
     if (url.pathname === "/healthz") {
       if (!isLocalDirect(request) && !authorized) {
@@ -305,26 +308,39 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     }
 
     const extraHeaders = {};
-    if (tokenEquals(url.searchParams.get("k") || "", config.authToken)) {
-      extraHeaders["Set-Cookie"] = authCookie(config.authToken);
+    if (auth.token && tokenEquals(url.searchParams.get("k") || "", auth.token)) {
+      extraHeaders["Set-Cookie"] = authCookie(auth.token);
     }
 
     if ((url.pathname === "/" || url.pathname === "/index.html") && request.method === "GET") {
-      sendFile(response, "index.html", "text/html; charset=utf-8", "no-store");
+      sendFile(response, "index.html", "text/html; charset=utf-8", "no-store", extraHeaders);
+      return;
+    }
+    if (url.pathname === "/probe" && request.method === "GET") {
+      sendFile(response, "probe.html", "text/html; charset=utf-8", "no-store", extraHeaders);
       return;
     }
     if (url.pathname === "/api/config" && request.method === "GET") {
       sendJson(response, 200, {
+        productName: config.productName,
         session: config.session,
         pollMs: config.pollMs,
         pollIdleMaxMs: config.pollIdleMaxMs,
         fontSizeDefault: config.fontSizeDefault,
         theme: config.theme,
         resizeToViewport: config.resizeToViewport,
+        canControl,
+        authLevel: auth.level,
+        publicUrl: currentPublicUrl() || "",
+        lanUrls: localLanAddresses(config.port),
       }, extraHeaders);
       return;
     }
     if (url.pathname === "/api/pairing" && request.method === "GET") {
+      if (!canControl) {
+        notFound(response);
+        return;
+      }
       sendJson(response, 200, pairingPayload(config, currentPublicUrl() || ""), extraHeaders);
       return;
     }
@@ -339,7 +355,19 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       return;
     }
     if (url.pathname === "/api/tmux/input" && request.method === "POST") {
+      if (!canControl) {
+        notFound(response);
+        return;
+      }
       handleInput(request, response);
+      return;
+    }
+    if (url.pathname === "/api/probe/poll" && request.method === "GET") {
+      sendJson(response, 200, {
+        server_time: new Date().toISOString(),
+        client_address: clientAddress(request),
+        event_number: Number(url.searchParams.get("event")) || 0,
+      });
       return;
     }
 
@@ -384,7 +412,7 @@ function main() {
     return;
   }
   if (flags.printUrl) {
-    console.log(bookmarkUrl(config));
+    console.log(bookmarkUrl(config, "view"));
     return;
   }
   if (flags.pair) {
@@ -402,11 +430,11 @@ function main() {
     if (config.ngrok.enabled) {
       ngrok = startNgrok({ ...config.ngrok, port: config.port }, log, (url) => {
         publicUrl = url;
-        log(`bookmark: ${bookmarkUrl(config)}`);
+        log(`bookmark: ${bookmarkUrl(config, "view", publicUrl)}`);
         log(`pairing: ${JSON.stringify(pairingPayload(config, publicUrl))}`);
       });
     } else {
-      log(`bookmark: ${bookmarkUrl(config)}`);
+      log(`bookmark: ${bookmarkUrl(config, "view")}`);
       log(`pairing: ${JSON.stringify(pairingPayload(config))}`);
     }
   });

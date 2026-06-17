@@ -23,14 +23,16 @@ Commands:
   off                    stop the background server
   restart [server args]  stop then start
   status [--json]        show process and /healthz state
-  url                    print configured bookmark URL
-  pair                   print pairing QR/JSON
+  url                    print configured view URL
+  pair-app               print Android app pairing QR/JSON with control token
+  pair-web               print browser QR/URL/token with view token
+  pair-web-control       print browser QR/URL/token with control token
   logs                   print the background server log path
 
 Examples:
   tools/airc local --session swyd
-  tools/airc on --session swyd
-  tools/airc off
+  tools/airc pair-app
+  tools/airc pair-web
 `);
   process.exit(exitCode);
 }
@@ -110,7 +112,7 @@ async function healthz(port) {
 
 async function authenticatedJson(config, pathname) {
   const response = await fetch(`http://127.0.0.1:${config.port}${pathname}`, {
-    headers: { "X-Airc-Auth": config.authToken },
+    headers: { "X-Airc-Auth": config.controlToken },
   });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -120,12 +122,16 @@ async function authenticatedJson(config, pathname) {
 
 function printPairing(payload) {
   const encoded = JSON.stringify(payload);
+  printQr(encoded);
+  console.log(JSON.stringify(payload, null, 2));
+}
+
+function printQr(value) {
   try {
-    require("qrcode-terminal").generate(encoded, { small: true });
+    require("qrcode-terminal").generate(value, { small: true });
   } catch {
     // JSON is enough for manual setup if QR rendering is unavailable.
   }
-  console.log(JSON.stringify(payload, null, 2));
 }
 
 function load(argv = []) {
@@ -261,6 +267,27 @@ async function cmdPair() {
   printPairing(pairingPayload(config));
 }
 
+async function publicUrlFor(config) {
+  const pid = activePid();
+  if (!pid) {
+    return "";
+  }
+  const health = await healthz(config.port);
+  return health?.ngrok?.url || "";
+}
+
+async function cmdPairWeb(level) {
+  const config = activeConfig();
+  const actualPublicUrl = await publicUrlFor(config);
+  const url = bookmarkUrl(config, level, actualPublicUrl);
+  printQr(url);
+  console.log(`url: ${url}`);
+  console.log(`token: ${level === "control" ? config.controlToken : config.viewToken}`);
+  if (!actualPublicUrl) {
+    console.log("note: no active ngrok URL reported; using configured/default URL");
+  }
+}
+
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
   if (!command || command === "-h" || command === "--help") {
@@ -278,9 +305,13 @@ async function main() {
   } else if (command === "status") {
     await cmdStatus(rest.includes("--json"));
   } else if (command === "url") {
-    console.log(bookmarkUrl(activeConfig()));
-  } else if (command === "pair") {
+    console.log(bookmarkUrl(activeConfig(), "view"));
+  } else if (command === "pair" || command === "pair-app") {
     await cmdPair();
+  } else if (command === "pair-web") {
+    await cmdPairWeb("view");
+  } else if (command === "pair-web-control") {
+    await cmdPairWeb("control");
   } else if (command === "logs") {
     console.log(LOG_FILE);
   } else {

@@ -8,12 +8,14 @@ const path = require("node:path");
 const DEFAULT_CONFIG_PATH = path.join(__dirname, "..", "config.json");
 
 const DEFAULTS = {
+  productName: "AI Remote Control",
   host: "127.0.0.1",
-  port: 8090,
+  port: 8080,
   session: "swyd",
   pollMs: 700,
   pollIdleMaxMs: 2500,
-  authToken: "",
+  viewToken: "",
+  controlToken: "",
   fontSizeDefault: 13,
   theme: "dark",
   resizeToViewport: false,
@@ -82,9 +84,22 @@ function loadConfig(argv) {
     throw new Error("port must be an integer between 1 and 65535");
   }
 
-  if (!config.authToken) {
-    config.authToken = generateToken();
-    fs.writeFileSync(configPath, `${JSON.stringify({ ...fileConfig, authToken: config.authToken }, null, 2)}\n`);
+  const persisted = { ...fileConfig };
+  let changed = false;
+  if (!config.controlToken) {
+    config.controlToken = typeof fileConfig.authToken === "string" && fileConfig.authToken
+      ? fileConfig.authToken
+      : generateToken();
+    persisted.controlToken = config.controlToken;
+    changed = true;
+  }
+  if (!config.viewToken) {
+    config.viewToken = generateToken();
+    persisted.viewToken = config.viewToken;
+    changed = true;
+  }
+  if (changed) {
+    fs.writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`);
   }
 
   return { config, flags: args.flags, configPath };
@@ -115,8 +130,13 @@ function baseUrl(config) {
   return `http://127.0.0.1:${config.port}`;
 }
 
-function bookmarkUrl(config) {
-  return `${baseUrl(config)}/?k=${config.authToken}`;
+function publicBaseUrl(config, actualBaseUrl = "") {
+  return actualBaseUrl || baseUrl(config);
+}
+
+function bookmarkUrl(config, level = "view", actualBaseUrl = "") {
+  const token = level === "control" ? config.controlToken : config.viewToken;
+  return `${publicBaseUrl(config, actualBaseUrl)}/?k=${token}`;
 }
 
 function pairingPayload(config, actualBaseUrl = "") {
@@ -124,13 +144,21 @@ function pairingPayload(config, actualBaseUrl = "") {
   const preferredBaseUrl = actualBaseUrl || (config.ngrok.enabled ? baseUrl(config) : (lanUrls[0] || baseUrl(config)));
   return {
     type: "airc-tmux-remote",
-    version: 1,
+    version: 2,
     name: `${os.hostname()} ${config.session}`,
     baseUrl: preferredBaseUrl,
-    token: config.authToken,
+    token: config.controlToken,
     session: config.session,
     lanUrls,
+    publicUrl: publicBaseUrl(config, actualBaseUrl),
   };
 }
 
-module.exports = { loadConfig, bookmarkUrl, pairingPayload, DEFAULT_CONFIG_PATH };
+module.exports = {
+  loadConfig,
+  bookmarkUrl,
+  pairingPayload,
+  localLanAddresses,
+  publicBaseUrl,
+  DEFAULT_CONFIG_PATH,
+};

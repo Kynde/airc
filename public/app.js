@@ -18,6 +18,12 @@
     termWrap: document.getElementById("term-wrap"),
     term: document.getElementById("term"),
     cursor: document.getElementById("cursor"),
+    controlBar: document.getElementById("control-bar"),
+    controlText: document.getElementById("control-text"),
+    controlSend: document.getElementById("control-send"),
+    controlUp: document.getElementById("control-up"),
+    controlDown: document.getElementById("control-down"),
+    controlEnter: document.getElementById("control-enter"),
     picker: document.getElementById("picker"),
     pickerList: document.getElementById("picker-list"),
     pickerClose: document.getElementById("picker-close"),
@@ -29,9 +35,15 @@
     history.replaceState(null, "", location.pathname);
   }
   const token = localStorage.getItem("airc_token") || "";
-  const headers = () => (token ? { "X-Airc-Auth": token } : {});
+  const headers = (extra = {}) => {
+    const out = { ...extra };
+    if (token) {
+      out["X-Airc-Auth"] = token;
+    }
+    return out;
+  };
 
-  let cfg = { pollMs: 700, pollIdleMaxMs: 2500, fontSizeDefault: 13, theme: "dark", resizeToViewport: false };
+  let cfg = { pollMs: 700, pollIdleMaxMs: 2500, fontSizeDefault: 13, theme: "dark", resizeToViewport: false, canControl: false };
   let etag = null;
   let interval = cfg.pollMs;
   let misses = 0;
@@ -108,6 +120,45 @@
     el.term.style.fontSize = `${size}px`;
     el.fontFit.classList.toggle("active", fontMode === "auto" && !cfg.resizeToViewport);
     placeCursor();
+  }
+
+  function viewedTarget() {
+    return pinned ? { target: "pane", paneId: pinned } : { target: "active" };
+  }
+
+  async function sendControl(payload) {
+    if (!cfg.canControl) {
+      return;
+    }
+    const response = await fetch("/api/tmux/input", {
+      method: "POST",
+      cache: "no-store",
+      headers: headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ ...viewedTarget(), ...payload }),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    etag = null;
+  }
+
+  async function sendControlText() {
+    const text = el.controlText.value;
+    if (!text) {
+      return;
+    }
+    el.controlText.value = "";
+    try {
+      await sendControl({ text });
+    } catch {
+      el.controlText.value = text;
+    }
+  }
+
+  function sendControlKey(key) {
+    sendControl({ key }).catch(() => {
+      // The status ticker will show stale state if control/auth is broken.
+    });
   }
 
   function fitCells() {
@@ -285,6 +336,16 @@
     }
     placeCursor();
   });
+  el.controlSend.addEventListener("click", sendControlText);
+  el.controlText.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      sendControlText();
+    }
+  });
+  el.controlUp.addEventListener("click", () => sendControlKey("Up"));
+  el.controlDown.addEventListener("click", () => sendControlKey("Down"));
+  el.controlEnter.addEventListener("click", () => sendControlKey("Enter"));
   window.addEventListener("resize", applyFont);
 
   async function start() {
@@ -297,6 +358,7 @@
         return;
       }
       cfg = { ...cfg, ...(await response.json()) };
+      el.controlBar.hidden = !cfg.canControl;
     } catch {
       // Polling will keep retrying.
     }

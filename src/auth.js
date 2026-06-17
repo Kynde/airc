@@ -18,24 +18,37 @@ function cookieToken(request) {
   }
   for (const part of header.split(";")) {
     const [name, ...rest] = part.trim().split("=");
-    if (name === "airc_auth") {
+    if (name === "airc_auth" || name === "swyd_auth") {
       return rest.join("=");
     }
   }
   return "";
 }
 
-function isAuthorized(request, url, token) {
+function presentedToken(request, url) {
   return (
-    tokenEquals(url.searchParams.get("k") || "", token) ||
-    tokenEquals(cookieToken(request), token) ||
-    tokenEquals(request.headers.authorization?.replace(/^Bearer\s+/i, "") || "", token) ||
-    tokenEquals(request.headers["x-airc-auth"] || "", token)
+    url.searchParams.get("k") ||
+    cookieToken(request) ||
+    request.headers.authorization?.replace(/^Bearer\s+/i, "") ||
+    request.headers["x-airc-auth"] ||
+    request.headers["x-swyd-auth"] ||
+    ""
   );
+}
+
+function authLevel(request, url, config) {
+  const token = presentedToken(request, url);
+  if (tokenEquals(token, config.controlToken || "")) {
+    return { level: "control", token };
+  }
+  if (tokenEquals(token, config.viewToken || "")) {
+    return { level: "view", token };
+  }
+  return { level: "none", token: "" };
 }
 
 function authCookie(token) {
   return `airc_auth=${token}; Max-Age=15552000; Secure; HttpOnly; SameSite=Lax; Path=/`;
 }
 
-module.exports = { isAuthorized, authCookie, tokenEquals };
+module.exports = { authLevel, authCookie, tokenEquals };

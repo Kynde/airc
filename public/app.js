@@ -62,6 +62,8 @@
   let lastChangeAt = 0;
   let ws = null;
   let fallbackStarted = false;
+  let followLeft = true;
+  let followBottom = true;
 
   function applyTheme(theme) {
     document.body.className = theme === "day" ? "theme-day" : "theme-dark";
@@ -96,6 +98,24 @@
     };
   }
 
+  function maxScrollTop() {
+    return Math.max(0, el.termWrap.scrollHeight - el.termWrap.clientHeight);
+  }
+
+  function updateScrollFollow() {
+    followLeft = el.termWrap.scrollLeft <= 2;
+    followBottom = el.termWrap.scrollTop >= maxScrollTop() - 2;
+  }
+
+  function applyScrollFollow() {
+    if (followLeft) {
+      el.termWrap.scrollLeft = 0;
+    }
+    if (followBottom) {
+      el.termWrap.scrollTop = maxScrollTop();
+    }
+  }
+
   function placeCursor() {
     if (!lastCursor || paused) {
       el.cursor.hidden = true;
@@ -125,6 +145,7 @@
     el.term.style.fontSize = `${size}px`;
     el.fontFit.classList.toggle("active", fontMode === "auto" && !cfg.resizeToViewport);
     placeCursor();
+    applyScrollFollow();
   }
 
   function applyControlsVisibility() {
@@ -249,6 +270,7 @@
     } else {
       placeCursor();
     }
+    applyScrollFollow();
   }
 
   function websocketUrl() {
@@ -473,6 +495,7 @@
   el.controlUp.addEventListener("click", () => sendControlKey("Up"));
   el.controlDown.addEventListener("click", () => sendControlKey("Down"));
   el.controlEnter.addEventListener("click", () => sendControlKey("Enter"));
+  el.termWrap.addEventListener("scroll", updateScrollFollow, { passive: true });
   window.addEventListener("resize", applyFont);
   window.addEventListener("resize", sendViewState);
 

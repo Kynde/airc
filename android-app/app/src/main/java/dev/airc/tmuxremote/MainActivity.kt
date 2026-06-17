@@ -496,12 +496,17 @@ class MainActivity : ComponentActivity() {
             .fg-inv{color:var(--bg)}.bg-inv{background:var(--primary)}.b{font-weight:700}.dim{opacity:.6}.i{font-style:italic}.u{text-decoration:underline}
             </style></head><body><div id="wrap"><pre id="term"></pre><div id="cursor"></div></div>
             <script>
-            let cols=0,rows=0,cursor=null,ch=7.2,line=15,scale=1.06,manual=0;
+            let cols=0,rows=0,cursor=null,ch=7.2,line=15,scale=1.06,manual=0,followLeft=true,followBottom=true;
             const lh=1.16;
-            function fit(){ if(cols>0&&rows>0){ const base=Math.min((innerWidth-16)/(cols*.6),(innerHeight-16)/(rows*lh)); const s=Math.max(7,Math.min(24,Math.floor((base*scale+manual)*2)/2)); const t=document.getElementById('term'); t.style.fontSize=s+'px'; ch=s*.6; line=s*lh; place(); } }
+            function scroller(){return document.scrollingElement||document.documentElement;}
+            function maxTop(){const s=scroller();return Math.max(0,s.scrollHeight-s.clientHeight);}
+            function updateFollow(){const s=scroller();followLeft=s.scrollLeft<=2;followBottom=s.scrollTop>=maxTop()-2;}
+            function applyFollow(){const s=scroller();if(followLeft)s.scrollLeft=0;if(followBottom)s.scrollTop=maxTop();}
+            function fit(){ if(cols>0&&rows>0){ const base=Math.min((innerWidth-16)/(cols*.6),(innerHeight-16)/(rows*lh)); const s=Math.max(7,Math.min(24,Math.floor((base*scale+manual)*2)/2)); const t=document.getElementById('term'); t.style.fontSize=s+'px'; ch=s*.6; line=s*lh; place(); applyFollow(); } }
             function bumpFont(delta){ manual=Math.max(-4,Math.min(4,manual+delta*.5)); fit(); }
             function place(){ const c=document.getElementById('cursor'); if(!cursor){c.style.display='none';return} c.style.display='block'; c.style.left=(8+cursor.x*ch)+'px'; c.style.top=(8+cursor.y*line)+'px'; c.style.width=ch+'px'; c.style.height=line+'px'; }
-            function render(frame){ document.getElementById('term').innerHTML=frame.html||''; cols=frame.cols||0; rows=frame.rows||0; cursor=frame.cursor; fit(); }
+            function render(frame){ document.getElementById('term').innerHTML=frame.html||''; cols=frame.cols||0; rows=frame.rows||0; cursor=frame.cursor; fit(); applyFollow(); }
+            addEventListener('scroll',updateFollow,{passive:true});
             addEventListener('resize',fit);
             </script></body></html>
         """.trimIndent()

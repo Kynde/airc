@@ -2,9 +2,9 @@
 
 ## Endpoint Fallback
 
-Android now tries LAN URLs first, then public/ngrok URLs. Improve this by
-remembering the last successful endpoint and periodically probing LAN in the
-background so off-LAN use does not pay the LAN timeout on every request.
+Android now remembers the last successful endpoint and periodically probes LAN
+again when using public/ngrok. Further improvement: probe LAN in the background
+instead of doing the periodic LAN retry inline with a foreground request.
 
 ## Systemd
 
@@ -41,8 +41,9 @@ Potential tooling:
 
 ## Transport
 
-Polling with ETags works and should remain as a fallback. WebSocket worked
-through ngrok in Tesla testing and could later reduce unchanged-frame polling.
+WebSockets are now the browser's preferred transport, with HTTP polling kept as
+a fallback. Further improvement: add explicit latency/transport indicators and
+avoid capturing faster than the browser can render.
 
 ## Multi-Pane / Window View
 

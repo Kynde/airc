@@ -61,9 +61,11 @@ Pairing payload behavior:
 - `GET /api/tmux/frame`
 - `GET /api/tmux/panes`
 - `POST /api/tmux/input`
+- `GET /api/status`
 - `GET /probe`
 - `GET /api/probe/poll`
 - `GET /healthz`
+- `WebSocket /api/tmux/ws`
 
 Unauthenticated static assets:
 
@@ -91,6 +93,9 @@ private surface.
 `GET /api/config` also returns non-secret URL metadata (`publicUrl`, `lanUrls`)
 for clients.
 
+`GET /api/status` returns live ngrok/public-tunnel status and local battery
+summary for the browser dashboard.
+
 Input payloads:
 
 ```json
@@ -115,6 +120,9 @@ Text uses `tmux send-keys -l`; named keys use `tmux send-keys`.
 
 See [Implementation Notes](implementation-notes.md) for tmux edge cases and
 sizing details.
+
+The browser prefers `WebSocket /api/tmux/ws` for frame updates and falls back to
+HTTP polling if the socket is unavailable or closes.
 
 ## Build And Test
 

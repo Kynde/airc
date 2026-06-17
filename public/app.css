@@ -84,6 +84,14 @@ body {
 .dot.stale { background: var(--bad); box-shadow: 0 0 12px var(--bad); }
 #state { min-width: 78px; }
 #note { color: var(--warn); }
+#dashboard {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#dashboard .ok { color: var(--accent); }
+#dashboard .bad { color: var(--bad); }
 #term-wrap {
   position: relative;
   flex: 1;

@@ -9,6 +9,7 @@
     dot: document.getElementById("dot"),
     state: document.getElementById("state"),
     note: document.getElementById("note"),
+    dashboard: document.getElementById("dashboard"),
     paneLabel: document.getElementById("pane-label"),
     fontMinus: document.getElementById("font-minus"),
     fontPlus: document.getElementById("font-plus"),
@@ -59,6 +60,8 @@
   let lastCursor = null;
   let lastOkAt = 0;
   let lastChangeAt = 0;
+  let ws = null;
+  let fallbackStarted = false;
 
   function applyTheme(theme) {
     document.body.className = theme === "day" ? "theme-day" : "theme-dark";
@@ -172,6 +175,33 @@
     });
   }
 
+  function renderStatus(payload) {
+    const parts = [];
+    if (payload.ngrok?.enabled) {
+      if (payload.ngrok.running && (payload.publicUrl || payload.ngrok.url)) {
+        parts.push(`<span class="ok">tunnel up</span>`);
+      } else {
+        parts.push(`<span class="bad">tunnel down</span>`);
+      }
+    }
+    if (payload.battery?.summary) {
+      parts.push(`bat ${payload.battery.summary}`);
+    }
+    el.dashboard.innerHTML = parts.join(" · ");
+  }
+
+  async function updateStatus() {
+    try {
+      const response = await fetch("/api/status", { cache: "no-store", headers: headers() });
+      if (!response.ok) {
+        return;
+      }
+      renderStatus(await response.json());
+    } catch {
+      // Frame polling already communicates connectivity problems.
+    }
+  }
+
   function fitCells() {
     const size = fontMode === "manual" ? fontSize : cfg.fontSizeDefault;
     const area = availArea();
@@ -181,7 +211,7 @@
     };
   }
 
-  async function tick() {
+  function frameQuery() {
     const query = new URLSearchParams();
     if (pinned) {
       query.set("pane", pinned);
@@ -190,6 +220,108 @@
       query.set("cols", String(cells.cols));
       query.set("rows", String(cells.rows));
     }
+    return query;
+  }
+
+  function renderFrame(frame) {
+    lastOkAt = Date.now();
+    misses = 0;
+    interval = cfg.pollMs;
+    if (!frame.ok) {
+      el.term.textContent = frame.error || "capture failed";
+      lastCursor = null;
+      placeCursor();
+      return;
+    }
+    if (pinned && frame.pinValid === false) {
+      pinned = "";
+      localStorage.removeItem("airc_pin");
+      sendViewState();
+    }
+    el.term.innerHTML = frame.html;
+    lastCursor = frame.cursor;
+    lastChangeAt = Date.now();
+    el.paneLabel.textContent = `${frame.pinned ? "pin " : ""}${frame.windowName}:${frame.paneIndex}`;
+    if (frame.cols !== lastCols || frame.rows !== lastRows) {
+      lastCols = frame.cols;
+      lastRows = frame.rows;
+      applyFont();
+    } else {
+      placeCursor();
+    }
+  }
+
+  function websocketUrl() {
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const query = new URLSearchParams();
+    if (token) {
+      query.set("k", token);
+    }
+    return `${protocol}//${location.host}/api/tmux/ws?${query}`;
+  }
+
+  function sendViewState() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    const cells = cfg.resizeToViewport && !pinned ? fitCells() : {};
+    ws.send(JSON.stringify({
+      type: "view",
+      pane: pinned,
+      cols: cells.cols,
+      rows: cells.rows,
+    }));
+  }
+
+  function startPollingFallback() {
+    if (fallbackStarted) {
+      return;
+    }
+    fallbackStarted = true;
+    loop();
+  }
+
+  function startWebSocket() {
+    if (!("WebSocket" in window) || !token) {
+      startPollingFallback();
+      return;
+    }
+    try {
+      ws = new WebSocket(websocketUrl());
+    } catch {
+      startPollingFallback();
+      return;
+    }
+    ws.addEventListener("open", () => {
+      etag = null;
+      sendViewState();
+    });
+    ws.addEventListener("message", (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === "frame") {
+          if (!paused) {
+            renderFrame(payload.frame);
+          }
+        } else if (payload.type === "heartbeat") {
+          lastOkAt = Date.now();
+        }
+      } catch {
+        // Ignore malformed stream messages and keep the socket alive.
+      }
+    });
+    ws.addEventListener("close", startPollingFallback);
+    ws.addEventListener("error", () => {
+      try {
+        ws.close();
+      } catch {
+        startPollingFallback();
+      }
+    });
+  }
+
+  async function tick() {
+    const query = frameQuery();
     const requestHeaders = headers();
     if (etag) {
       requestHeaders["If-None-Match"] = etag;
@@ -207,31 +339,7 @@
       throw new Error(`HTTP ${response.status}`);
     }
     etag = response.headers.get("ETag");
-    const frame = await response.json();
-    lastOkAt = Date.now();
-    misses = 0;
-    interval = cfg.pollMs;
-    if (!frame.ok) {
-      el.term.textContent = frame.error || "capture failed";
-      lastCursor = null;
-      placeCursor();
-      return;
-    }
-    if (pinned && frame.pinValid === false) {
-      pinned = "";
-      localStorage.removeItem("airc_pin");
-    }
-    el.term.innerHTML = frame.html;
-    lastCursor = frame.cursor;
-    lastChangeAt = Date.now();
-    el.paneLabel.textContent = `${frame.pinned ? "pin " : ""}${frame.windowName}:${frame.paneIndex}`;
-    if (frame.cols !== lastCols || frame.rows !== lastRows) {
-      lastCols = frame.cols;
-      lastRows = frame.rows;
-      applyFont();
-    } else {
-      placeCursor();
-    }
+    renderFrame(await response.json());
   }
 
   function schedule() {
@@ -285,6 +393,7 @@
       pinned = "";
       localStorage.removeItem("airc_pin");
       etag = null;
+      sendViewState();
       el.picker.hidden = true;
     });
     el.pickerList.appendChild(follow);
@@ -297,6 +406,7 @@
         pinned = pane.paneId;
         localStorage.setItem("airc_pin", pinned);
         etag = null;
+        sendViewState();
         el.picker.hidden = true;
       });
       el.pickerList.appendChild(button);
@@ -349,6 +459,7 @@
     if (!paused) {
       etag = null;
       interval = cfg.pollMs;
+      sendViewState();
     }
     placeCursor();
   });
@@ -363,6 +474,7 @@
   el.controlDown.addEventListener("click", () => sendControlKey("Down"));
   el.controlEnter.addEventListener("click", () => sendControlKey("Enter"));
   window.addEventListener("resize", applyFont);
+  window.addEventListener("resize", sendViewState);
 
   async function start() {
     applyTheme(localStorage.getItem("airc_theme") || cfg.theme);
@@ -382,7 +494,9 @@
     interval = cfg.pollMs;
     await measureFont();
     applyFont();
-    loop();
+    updateStatus();
+    setInterval(updateStatus, 15000);
+    startWebSocket();
   }
 
   start();

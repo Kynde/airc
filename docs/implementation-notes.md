@@ -79,7 +79,9 @@ produce SGR, so this is adequate for the current one-pane mirror.
 
 ## Polling and ETags
 
-Polling is request-driven. There is no background capture loop.
+The browser prefers a WebSocket frame stream and falls back to HTTP polling.
+Polling is request-driven. There is no background capture loop when no viewer is
+connected.
 
 Flow:
 
@@ -94,6 +96,15 @@ Flow:
 After repeated unchanged frames the browser increases its interval up to
 `pollIdleMaxMs`.
 
+WebSocket flow:
+
+1. Browser connects to `/api/tmux/ws?k=<token>`.
+2. Browser sends view state: pinned pane and optional viewport cols/rows.
+3. Server captures frames on the configured poll interval.
+4. Changed frames are sent as the same JSON shape as `/api/tmux/frame`.
+5. Unchanged frames send heartbeats so the browser does not mark the connection
+   stale.
+
 ## Sizing
 
 The main readability lever is the source tmux pane's cols/rows. Browser and app
@@ -106,9 +117,7 @@ same tmux window visible on the laptop.
 ## Known Rough Edges
 
 - Whole tmux window/multi-pane rendering is not implemented.
-- Android endpoint fallback currently retries LAN first for every request, so
-  off-LAN use can spend a short timeout before falling back to public/ngrok.
-- No WebSocket frame stream yet, although WebSocket through ngrok worked in
-  Tesla testing.
+- Android remembers the last successful endpoint and periodically probes LAN
+  again when using public/ngrok.
 - ngrok free tier has the interstitial and one-agent limit.
 - Local private LAN access from Tesla was not reliable.

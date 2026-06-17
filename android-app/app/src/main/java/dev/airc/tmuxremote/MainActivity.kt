@@ -59,6 +59,8 @@ class MainActivity : ComponentActivity() {
     private var pinnedPane: String = ""
     private var etag: String? = null
     private var polling = false
+    private var lastGoodUrl: String = ""
+    private var lastLanProbeAt: Long = 0
 
     private val qrLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val contents = result.data?.getStringExtra(QrScanActivity.EXTRA_QR_TEXT)
@@ -71,6 +73,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         profile = loadProfile()
         pinnedPane = prefs().getString("pinnedPane", "") ?: ""
+        lastGoodUrl = prefs().getString("lastGoodUrl", "") ?: ""
         buildUi()
         if (profile == null) {
             showPairDialog()
@@ -112,6 +115,8 @@ class MainActivity : ComponentActivity() {
             .putString("lanUrls", JSONArray(profile!!.lanUrls.map { it.trimEnd('/') }).toString())
             .apply()
         etag = null
+        lastGoodUrl = ""
+        prefs().edit().remove("lastGoodUrl").apply()
         status.text = "paired"
         startPolling()
     }
@@ -273,10 +278,12 @@ class MainActivity : ComponentActivity() {
                         }
                         val code = connection.responseCode
                         if (code == 304) {
+                            rememberEndpoint(baseUrl)
                             postStatus("idle")
                             handled = true
                             break
                         } else if (code in 200..299) {
+                            rememberEndpoint(baseUrl)
                             etag = connection.getHeaderField("ETag")
                             val json = connection.inputStream.bufferedReader().readText()
                             val frame = JSONObject(json)
@@ -349,6 +356,7 @@ class MainActivity : ComponentActivity() {
                         OutputStreamWriter(connection.outputStream, StandardCharsets.UTF_8).use { it.write(body) }
                         val code = connection.responseCode
                         if (code in 200..299) {
+                            rememberEndpoint(baseUrl)
                             postStatus("sent")
                             etag = null
                             sent = true
@@ -381,6 +389,7 @@ class MainActivity : ComponentActivity() {
                             readTimeout = 6000
                         }
                         val payload = JSONObject(connection.inputStream.bufferedReader().readText())
+                        rememberEndpoint(baseUrl)
                         val panes = mutableListOf(Pane("", "Follow active pane", pinnedPane.isBlank()))
                         val arr: JSONArray = payload.optJSONArray("panes") ?: JSONArray()
                         for (i in 0 until arr.length()) {
@@ -489,10 +498,28 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun endpointUrls(current: Profile): List<String> {
-        return (current.lanUrls + current.baseUrl + current.publicUrl)
+        val normalizedLan = current.lanUrls.map { it.trim().trimEnd('/') }.filter { it.isNotBlank() }
+        val normalizedLast = lastGoodUrl.trim().trimEnd('/')
+        val now = System.currentTimeMillis()
+        val shouldProbeLan = normalizedLan.isNotEmpty() &&
+            normalizedLast.isNotBlank() &&
+            normalizedLast !in normalizedLan &&
+            now - lastLanProbeAt > 30000
+        if (shouldProbeLan) {
+            lastLanProbeAt = now
+        }
+        val preferred = if (shouldProbeLan) normalizedLan + normalizedLast else listOf(normalizedLast)
+        return (preferred + normalizedLan + current.baseUrl + current.publicUrl)
             .map { it.trim().trimEnd('/') }
             .filter { it.isNotBlank() }
             .distinct()
+    }
+
+    private fun rememberEndpoint(baseUrl: String) {
+        val normalized = baseUrl.trim().trimEnd('/')
+        if (normalized.isBlank() || normalized == lastGoodUrl) return
+        lastGoodUrl = normalized
+        prefs().edit().putString("lastGoodUrl", normalized).apply()
     }
 
     private fun jsonArrayToList(array: JSONArray?): List<String> {

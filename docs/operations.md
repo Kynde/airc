@@ -89,8 +89,9 @@ only know LAN URLs because local mode disables ngrok.
 - `A-` and `A+` adjust app-side font rendering only; they do not resize tmux.
 - If the pairing payload includes both LAN and public URLs, the app tries LAN
   first and falls back to the public URL.
-- The app tries LAN again on later requests, so returning to the same network
-  switches back automatically.
+- The app remembers the last successful endpoint. When it is using a public URL,
+  it periodically tries LAN again, so returning to the same network switches
+  back automatically.
 
 ## Browser Usage
 
@@ -103,6 +104,9 @@ URL with the control token; it does not open a browser from the CLI. Browser
 controls send input to the currently viewed pane.
 
 `/probe` is available after auth for browser diagnostics.
+
+The browser top row shows public tunnel liveness and laptop battery status when
+available. Frame updates use WebSockets when supported and fall back to polling.
 
 ## Display Sizing
 

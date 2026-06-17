@@ -60,6 +60,11 @@ data class Pane(
 )
 
 class MainActivity : ComponentActivity() {
+    private class TerminalWebView(context: Context) : WebView(context) {
+        fun maxScrollX(): Int = (computeHorizontalScrollRange() - width).coerceAtLeast(0)
+        fun maxScrollY(): Int = (computeVerticalScrollRange() - height).coerceAtLeast(0)
+    }
+
     private object Chrome {
         const val bg = 0xFF070B0A.toInt()
         const val surface = 0xFF0A100E.toInt()
@@ -79,7 +84,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
-    private lateinit var webView: WebView
+    private lateinit var webView: TerminalWebView
     private lateinit var status: TextView
     private lateinit var statusDot: View
     private lateinit var paneButton: Button
@@ -92,6 +97,9 @@ class MainActivity : ComponentActivity() {
     private var lastLanProbeAt: Long = 0
     private var statusPulse: ObjectAnimator? = null
     private var statusDetail: String = "connecting"
+    private var followWebViewLeft = true
+    private var followWebViewBottom = true
+    private var touchingWebView = false
     private val monoTypeface: Typeface by lazy { Typeface.create("monospace", Typeface.NORMAL) }
 
     private val qrLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -205,11 +213,24 @@ class MainActivity : ComponentActivity() {
         })
         top.addView(settingsButton, LinearLayout.LayoutParams(dp(42), dp(34)))
 
-        webView = WebView(this).apply {
+        webView = TerminalWebView(this).apply {
             setBackgroundColor(Chrome.bg)
             settings.javaScriptEnabled = true
             settings.cacheMode = WebSettings.LOAD_NO_CACHE
             settings.domStorageEnabled = false
+            setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> touchingWebView = true
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        touchingWebView = false
+                        updateWebViewFollow()
+                    }
+                }
+                false
+            }
+            setOnScrollChangeListener { _, _, _, _, _ ->
+                if (touchingWebView) updateWebViewFollow()
+            }
             loadDataWithBaseURL("https://local.airc/", terminalHtml(), "text/html", "UTF-8", null)
         }
 
@@ -474,7 +495,29 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun adjustFont(delta: Int) {
-        webView.evaluateJavascript("bumpFont($delta)", null)
+        webView.evaluateJavascript("window.bumpFont && window.bumpFont($delta)") {
+            anchorWebViewIfFollowing()
+        }
+    }
+
+    private fun updateWebViewFollow() {
+        val maxX = webView.maxScrollX()
+        val maxY = webView.maxScrollY()
+        followWebViewLeft = webView.scrollX <= dp(2) || maxX == 0
+        followWebViewBottom = webView.scrollY >= maxY - dp(2)
+    }
+
+    private fun anchorWebViewIfFollowing() {
+        webView.post {
+            val x = if (followWebViewLeft) 0 else webView.scrollX
+            val y = if (followWebViewBottom) webView.maxScrollY() else webView.scrollY
+            webView.scrollTo(x, y)
+            webView.postDelayed({
+                val settledX = if (followWebViewLeft) 0 else webView.scrollX
+                val settledY = if (followWebViewBottom) webView.maxScrollY() else webView.scrollY
+                webView.scrollTo(settledX, settledY)
+            }, 80)
+        }
     }
 
     private fun terminalHtml(): String {
@@ -501,11 +544,15 @@ class MainActivity : ComponentActivity() {
             function scroller(){return document.scrollingElement||document.documentElement;}
             function maxTop(){const s=scroller();return Math.max(0,s.scrollHeight-s.clientHeight);}
             function updateFollow(){const s=scroller();followLeft=s.scrollLeft<=2;followBottom=s.scrollTop>=maxTop()-2;}
-            function applyFollow(){const s=scroller();if(followLeft)s.scrollLeft=0;if(followBottom)s.scrollTop=maxTop();}
-            function fit(){ if(cols>0&&rows>0){ const base=Math.min((innerWidth-16)/(cols*.6),(innerHeight-16)/(rows*lh)); const s=Math.max(7,Math.min(24,Math.floor((base*scale+manual)*2)/2)); const t=document.getElementById('term'); t.style.fontSize=s+'px'; ch=s*.6; line=s*lh; place(); applyFollow(); } }
-            function bumpFont(delta){ manual=Math.max(-4,Math.min(4,manual+delta*.5)); fit(); }
+            function shouldNativeAnchor(){return followLeft&&followBottom;}
+            function setFollowScroll(){const s=scroller();const left=followLeft?0:s.scrollLeft;const top=followBottom?maxTop():s.scrollTop;s.scrollLeft=left;s.scrollTop=top;scrollTo(left,top);}
+            function applyFollow(){setFollowScroll();requestAnimationFrame(setFollowScroll);}
+            function measure(size){const p=document.createElement('span');p.style.cssText="position:absolute;visibility:hidden;white-space:pre;font:"+size+"px 'Fira Code',monospace";p.textContent='0'.repeat(50);document.body.appendChild(p);const w=p.getBoundingClientRect().width;p.remove();return w>0?w/50:size*.6;}
+            function sizeGrid(){const w=20+cols*ch,h=18+rows*line,wrap=document.getElementById('wrap');wrap.style.minWidth=w+'px';wrap.style.minHeight=h+'px';document.getElementById('term').style.minHeight=(rows*line)+'px';}
+            function fit(){ if(cols>0&&rows>0){ const base=(innerWidth-20)/(cols*.6); const s=Math.max(7,Math.min(24,Math.floor((base*scale+manual)*2)/2)); const t=document.getElementById('term'); t.style.fontSize=s+'px'; ch=measure(s); line=s*lh; sizeGrid(); place(); applyFollow(); } }
+            window.bumpFont=function(delta){ manual=Math.max(-8,Math.min(8,manual+delta)); fit(); return shouldNativeAnchor(); };
             function place(){ const c=document.getElementById('cursor'); if(!cursor){c.style.display='none';return} c.style.display='block'; c.style.left=(8+cursor.x*ch)+'px'; c.style.top=(8+cursor.y*line)+'px'; c.style.width=ch+'px'; c.style.height=line+'px'; }
-            function render(frame){ document.getElementById('term').innerHTML=frame.html||''; cols=frame.cols||0; rows=frame.rows||0; cursor=frame.cursor; fit(); applyFollow(); }
+            function render(frame){ document.getElementById('term').innerHTML=frame.html||''; cols=frame.cols||0; rows=frame.rows||0; cursor=frame.cursor; fit(); applyFollow(); return shouldNativeAnchor(); }
             addEventListener('scroll',updateFollow,{passive:true});
             addEventListener('resize',fit);
             </script></body></html>
@@ -551,7 +598,9 @@ class MainActivity : ComponentActivity() {
                                 handler.post {
                                     paneButton.text = label
                                     setStatus("live")
-                                    webView.evaluateJavascript("render(${frame.toString()})", null)
+                                    webView.evaluateJavascript("render(${frame.toString()})") {
+                                        anchorWebViewIfFollowing()
+                                    }
                                 }
                             } else {
                                 postStatus(frame.optString("error", "error"))

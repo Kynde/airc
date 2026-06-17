@@ -1,15 +1,24 @@
 package dev.airc.tmuxremote
 
 import android.Manifest
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.TextUtils
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.webkit.WebSettings
@@ -17,6 +26,7 @@ import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
@@ -50,9 +60,28 @@ data class Pane(
 )
 
 class MainActivity : ComponentActivity() {
+    private object Chrome {
+        const val bg = 0xFF070B0A.toInt()
+        const val surface = 0xFF0A100E.toInt()
+        const val primary = 0xFF9EF56C.toInt()
+        const val primaryDim = 0xFF6CC458.toInt()
+        const val accent = 0xFF16FFFF.toInt()
+        const val accent2 = 0xFFFF6EC7.toInt()
+        const val muted = 0xFFD5D0AC.toInt()
+        const val amber = 0xFFEF9F27.toInt()
+        const val danger = 0xFFE24B4A.toInt()
+        const val primaryText = 0xFF04240F.toInt()
+        const val borderAlpha = 0x4D9EF56C.toInt()
+        const val dimBorder = 0x666CC458.toInt()
+        const val wash = 0x1F9EF56C
+        const val offlineFill = 0xFF140909.toInt()
+        const val radiusDp = 6
+    }
+
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var webView: WebView
     private lateinit var status: TextView
+    private lateinit var statusDot: View
     private lateinit var paneButton: Button
     private lateinit var input: EditText
     private var profile: Profile? = null
@@ -61,6 +90,9 @@ class MainActivity : ComponentActivity() {
     private var polling = false
     private var lastGoodUrl: String = ""
     private var lastLanProbeAt: Long = 0
+    private var statusPulse: ObjectAnimator? = null
+    private var statusDetail: String = "connecting"
+    private val monoTypeface: Typeface by lazy { Typeface.create("monospace", Typeface.NORMAL) }
 
     private val qrLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val contents = result.data?.getStringExtra(QrScanActivity.EXTRA_QR_TEXT)
@@ -117,14 +149,16 @@ class MainActivity : ComponentActivity() {
         etag = null
         lastGoodUrl = ""
         prefs().edit().remove("lastGoodUrl").apply()
-        status.text = "paired"
+        setStatus("paired")
         startPolling()
     }
 
     private fun buildUi() {
+        window.statusBarColor = Chrome.surface
+        window.navigationBarColor = Chrome.bg
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(16, 19, 20))
+            setBackgroundColor(Chrome.bg)
         }
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -135,23 +169,44 @@ class MainActivity : ComponentActivity() {
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(6), dp(4), dp(6), dp(4))
-            setBackgroundColor(Color.rgb(23, 29, 28))
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setBackgroundColor(Chrome.surface)
+        }
+        val statusWrap = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(2), 0, dp(8), 0)
+            setOnClickListener { showStatusDetail() }
+        }
+        statusDot = View(this).apply {
+            background = dotDrawable(Chrome.amber, filled = true, glow = false)
+            setOnClickListener { showStatusDetail() }
         }
         status = TextView(this).apply {
             text = "connecting"
-            setTextColor(Color.rgb(215, 225, 223))
-            textSize = 15f
-            minWidth = dp(72)
+            typeface = monoTypeface
+            setTextColor(Chrome.amber)
+            textSize = 12f
+            includeFontPadding = false
+            letterSpacing = 0.03f
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
         }
-        paneButton = compactButton("active") { showPanePicker() }
-        val pair = compactButton("pair") { showPairDialog() }
-        top.addView(status)
-        top.addView(paneButton, LinearLayout.LayoutParams(0, dp(42), 1f))
-        top.addView(pair)
+        statusWrap.addView(statusDot, LinearLayout.LayoutParams(dp(9), dp(9)).apply {
+            rightMargin = dp(7)
+        })
+        statusWrap.addView(status, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        paneButton = chromeButton("active", ButtonKind.PaneActive) { showPanePicker() }
+        val settingsButton = chromeButton("⚙", ButtonKind.IconAccent) { anchor -> showSettingsMenu(anchor) }
+        top.addView(statusWrap, LinearLayout.LayoutParams(0, dp(34), 1f))
+        top.addView(paneButton, LinearLayout.LayoutParams(dp(112), dp(34)).apply {
+            leftMargin = dp(6)
+            rightMargin = dp(6)
+        })
+        top.addView(settingsButton, LinearLayout.LayoutParams(dp(42), dp(34)))
 
         webView = WebView(this).apply {
-            setBackgroundColor(Color.rgb(5, 7, 7))
+            setBackgroundColor(Chrome.bg)
             settings.javaScriptEnabled = true
             settings.cacheMode = WebSettings.LOAD_NO_CACHE
             settings.domStorageEnabled = false
@@ -160,22 +215,25 @@ class MainActivity : ComponentActivity() {
 
         val bottom = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(6), dp(5), dp(6), dp(5))
-            setBackgroundColor(Color.rgb(23, 29, 28))
+            setPadding(dp(10), dp(9), dp(10), dp(11))
+            setBackgroundColor(Chrome.surface)
         }
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         input = EditText(this).apply {
-            hint = "text"
+            hint = "type a message"
             setSingleLine(true)
             imeOptions = EditorInfo.IME_ACTION_SEND
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.rgb(147, 163, 159))
-            textSize = 16f
+            typeface = monoTypeface
+            setTextColor(Chrome.muted)
+            setHintTextColor(Chrome.primaryDim)
+            textSize = 13f
             minHeight = dp(42)
-            setPadding(dp(8), 0, dp(8), 0)
+            includeFontPadding = false
+            background = roundedStroke(Chrome.bg, Chrome.borderAlpha, Chrome.radiusDp)
+            setPadding(dp(10), 0, dp(10), 0)
             setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_SEND) {
                     sendInputText()
@@ -185,21 +243,25 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        inputRow.addView(input, LinearLayout.LayoutParams(0, dp(42), 1f))
-        inputRow.addView(compactButton("send") { sendInputText() }, LinearLayout.LayoutParams(dp(82), dp(42)))
+        inputRow.addView(input, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
+            rightMargin = dp(7)
+        })
+        inputRow.addView(chromeButton("send", ButtonKind.Primary) { sendInputText() }, LinearLayout.LayoutParams(dp(84), dp(42)))
 
         val quickRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        quickRow.addView(compactButton("A-") { adjustFont(-1) }, LinearLayout.LayoutParams(0, dp(38), 1f))
-        quickRow.addView(compactButton("A+") { adjustFont(1) }, LinearLayout.LayoutParams(0, dp(38), 1f))
-        quickRow.addView(compactButton("^") { sendKey("Up") }, LinearLayout.LayoutParams(0, dp(38), 1f))
-        quickRow.addView(compactButton("v") { sendKey("Down") }, LinearLayout.LayoutParams(0, dp(38), 1f))
-        quickRow.addView(compactButton("enter") { sendKey("Enter") }, LinearLayout.LayoutParams(0, dp(38), 1.4f))
+        addQuickKey(quickRow, "A-", 1f) { adjustFont(-1) }
+        addQuickKey(quickRow, "A+", 1f) { adjustFont(1) }
+        addQuickKey(quickRow, "^", 1f) { sendKey("Up") }
+        addQuickKey(quickRow, "v", 1f) { sendKey("Down") }
+        addQuickKey(quickRow, "enter", 1.45f, ButtonKind.Enter) { sendKey("Enter") }
 
         bottom.addView(inputRow)
-        bottom.addView(quickRow)
+        bottom.addView(quickRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(39)).apply {
+            topMargin = dp(8)
+        })
 
         root.addView(top)
         root.addView(webView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -207,18 +269,208 @@ class MainActivity : ComponentActivity() {
         setContentView(root)
     }
 
-    private fun compactButton(label: String, action: () -> Unit): Button {
+    private enum class ButtonKind {
+        Key, Primary, Enter, PaneActive, PaneInactive, IconAccent
+    }
+
+    private fun chromeButton(label: String, kind: ButtonKind = ButtonKind.Key, action: (View) -> Unit): Button {
         return Button(this).apply {
             text = label
             isAllCaps = false
-            textSize = 16f
+            typeface = monoTypeface
+            textSize = if (kind == ButtonKind.IconAccent) 18f else 12f
+            includeFontPadding = false
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
             minHeight = 0
             minimumHeight = 0
             minWidth = 0
             minimumWidth = 0
-            setPadding(dp(6), 0, dp(6), 0)
-            setOnClickListener { action() }
+            stateListAnimator = null
+            elevation = 0f
+            setPadding(dp(8), 0, dp(8), 0)
+            applyButtonKind(kind)
+            setOnTouchListener { view, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        view.scaleX = 0.97f
+                        view.scaleY = 0.97f
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        view.scaleX = 1f
+                        view.scaleY = 1f
+                    }
+                }
+                false
+            }
+            setOnClickListener { action(it) }
         }
+    }
+
+    private fun Button.applyButtonKind(kind: ButtonKind) {
+        val (textColor, fill, stroke, pressedFill) = when (kind) {
+            ButtonKind.Primary -> arrayOf(Chrome.primaryText, Chrome.primary, Chrome.primary, Chrome.primary)
+            ButtonKind.Enter -> arrayOf(Chrome.accent, Chrome.bg, Chrome.accent, Chrome.wash)
+            ButtonKind.PaneActive -> arrayOf(Chrome.primaryText, Chrome.primary, Chrome.primary, Chrome.primary)
+            ButtonKind.PaneInactive -> arrayOf(Chrome.primaryDim, Chrome.bg, Chrome.dimBorder, Chrome.wash)
+            ButtonKind.IconAccent -> arrayOf(Chrome.accent, Chrome.surface, Color.TRANSPARENT, Chrome.wash)
+            ButtonKind.Key -> arrayOf(Chrome.primary, Chrome.bg, Chrome.borderAlpha, Chrome.wash)
+        }
+        setTextColor(textColor)
+        background = stateBackground(fill, stroke, pressedFill)
+        if (kind == ButtonKind.Primary || kind == ButtonKind.PaneActive) {
+            setShadowLayer(8f, 0f, 0f, Color.argb(150, 158, 245, 108))
+        } else if (kind == ButtonKind.Enter || kind == ButtonKind.IconAccent) {
+            setShadowLayer(6f, 0f, 0f, Color.argb(120, 22, 255, 255))
+        } else {
+            setShadowLayer(4f, 0f, 0f, Color.argb(85, 158, 245, 108))
+        }
+    }
+
+    private fun addQuickKey(row: LinearLayout, label: String, weight: Float, kind: ButtonKind = ButtonKind.Key, action: () -> Unit) {
+        row.addView(chromeButton(label, kind) { action() }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight).apply {
+            rightMargin = if (row.childCount < 4) dp(7) else 0
+        })
+    }
+
+    private fun roundedStroke(fill: Int, stroke: Int, radiusDp: Int): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(radiusDp).toFloat()
+            setColor(fill)
+            setStroke(dp(1), stroke)
+        }
+    }
+
+    private fun stateBackground(fill: Int, stroke: Int, pressedFill: Int): StateListDrawable {
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), roundedStroke(pressedFill, stroke, Chrome.radiusDp))
+            addState(intArrayOf(), roundedStroke(fill, stroke, Chrome.radiusDp))
+        }
+    }
+
+    private fun dotDrawable(color: Int, filled: Boolean, glow: Boolean): LayerDrawable {
+        val core = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (filled) color else Chrome.offlineFill)
+            setStroke(dp(1), color)
+        }
+        if (!glow) return LayerDrawable(arrayOf(core))
+        val halo = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.argb(75, 158, 245, 108))
+        }
+        return LayerDrawable(arrayOf(halo, core)).apply {
+            setLayerInset(1, dp(2), dp(2), dp(2), dp(2))
+        }
+    }
+
+    private fun setStatus(text: String) {
+        statusDetail = text
+        val lower = text.lowercase()
+        when {
+            lower == "live" || lower == "idle" || lower == "sent" || lower == "paired" -> {
+                stopStatusPulse()
+                status.text = "live"
+                status.setTextColor(Chrome.primary)
+                statusDot.background = dotDrawable(Chrome.primary, filled = true, glow = true)
+                statusDot.alpha = 1f
+            }
+            lower == "connecting" || lower.contains("timeout") || lower.contains("failed") || lower.startsWith("http") || lower.startsWith("send") || lower.startsWith("panes") -> {
+                status.text = "reconnecting"
+                status.setTextColor(Chrome.amber)
+                statusDot.background = dotDrawable(Chrome.amber, filled = true, glow = false)
+                startStatusPulse()
+            }
+            else -> {
+                stopStatusPulse()
+                status.text = "offline"
+                status.setTextColor(Chrome.danger)
+                statusDot.background = dotDrawable(Chrome.danger, filled = false, glow = false)
+                statusDot.alpha = 1f
+            }
+        }
+    }
+
+    private fun showStatusDetail() {
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(6))
+            addView(TextView(this@MainActivity).apply {
+                text = "Connection status"
+                typeface = monoTypeface
+                setTextColor(Chrome.primary)
+                textSize = 18f
+                includeFontPadding = false
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = statusDetail.ifBlank { status.text.toString() }
+                typeface = monoTypeface
+                setTextColor(Chrome.muted)
+                textSize = 13f
+                setPadding(0, dp(14), 0, dp(4))
+            })
+        }
+        AlertDialog.Builder(this)
+            .setView(body)
+            .setPositiveButton("OK", null)
+            .create()
+            .apply {
+                setOnShowListener {
+                    window?.setBackgroundDrawable(roundedStroke(Chrome.surface, Chrome.borderAlpha, Chrome.radiusDp))
+                    getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
+                        typeface = monoTypeface
+                        setTextColor(Chrome.accent)
+                        textSize = 13f
+                    }
+                }
+                show()
+            }
+    }
+
+    private fun startStatusPulse() {
+        if (statusPulse?.isRunning == true) return
+        statusDot.alpha = 1f
+        statusPulse = ObjectAnimator.ofFloat(statusDot, View.ALPHA, 1f, 0.35f, 1f).apply {
+            duration = 1600
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.RESTART
+            start()
+        }
+    }
+
+    private fun stopStatusPulse() {
+        statusPulse?.cancel()
+        statusPulse = null
+        statusDot.alpha = 1f
+    }
+
+    private fun showSettingsMenu(anchor: View) {
+        lateinit var popup: PopupWindow
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(9), dp(10), dp(10))
+            background = roundedStroke(Chrome.surface, Chrome.borderAlpha, Chrome.radiusDp)
+            addView(TextView(this@MainActivity).apply {
+                text = "settings"
+                typeface = monoTypeface
+                setTextColor(Chrome.accent)
+                textSize = 11f
+                includeFontPadding = false
+                letterSpacing = 0.04f
+                setPadding(dp(2), 0, dp(2), dp(8))
+            })
+            addView(chromeButton("pair laptop", ButtonKind.Key) {
+                popup.dismiss()
+                showPairDialog()
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(38)))
+        }
+        popup = PopupWindow(panel, dp(178), LinearLayout.LayoutParams.WRAP_CONTENT, true).apply {
+            isOutsideTouchable = true
+            elevation = dp(6).toFloat()
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        }
+        popup.showAsDropDown(anchor, -dp(136), dp(7), Gravity.NO_GRAVITY)
     }
 
     private fun adjustFont(delta: Int) {
@@ -229,17 +481,19 @@ class MainActivity : ComponentActivity() {
         return """
             <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
-            html,body{height:100%;margin:0;background:#050707;color:#d7e1df;overflow:auto}
-            body{font-family:monospace}
-            #wrap{position:relative;min-height:100%;padding:8px;box-sizing:border-box}
-            #term{margin:0;white-space:pre;font-size:12px;line-height:1.16}
-            #cursor{position:absolute;background:#d7e1df;opacity:.65;animation:blink 1.1s step-end infinite}
+            :root{--bg:#070B0A;--surface:#0A100E;--primary:#9EF56C;--primary-dim:#6CC458;--accent:#16FFFF;--accent-2:#FF6EC7;--muted:#D5D0AC;--amber:#EF9F27;--danger:#E24B4A}
+            html,body{height:100%;margin:0;background:var(--bg);color:var(--muted);overflow:auto}
+            body{font-family:'Fira Code',monospace}
+            #wrap{position:relative;min-height:100%;padding:9px 10px;box-sizing:border-box;background:radial-gradient(circle at 50% 0,rgba(158,245,108,.055),transparent 30%),var(--bg)}
+            #wrap:after{content:"";pointer-events:none;position:fixed;inset:0;background:linear-gradient(rgba(255,255,255,.025) 50%,rgba(0,0,0,.045) 50%);background-size:100% 4px;mix-blend-mode:screen}
+            #term{margin:0;white-space:pre;font-size:12px;line-height:1.16;text-shadow:0 0 5px rgba(158,245,108,.25)}
+            #cursor{position:absolute;background:var(--primary);opacity:.7;box-shadow:0 0 8px rgba(158,245,108,.75);animation:blink 1.1s step-end infinite}
             @keyframes blink{50%{opacity:.1}}
-            .fg-0{color:#363b40}.fg-1{color:#ff7070}.fg-2{color:#49d17d}.fg-3{color:#d4a72c}.fg-4{color:#58a6ff}.fg-5{color:#d2a8ff}.fg-6{color:#56d4dd}.fg-7{color:#d7e1df}
-            .fg-8{color:#8b949e}.fg-9{color:#ff8f8f}.fg-10{color:#70e39b}.fg-11{color:#eac55f}.fg-12{color:#79c0ff}.fg-13{color:#dcbdfb}.fg-14{color:#76e3ea}.fg-15{color:#fff}
-            .bg-0{background:#363b40}.bg-1{background:#ff7070}.bg-2{background:#49d17d}.bg-3{background:#d4a72c}.bg-4{background:#58a6ff}.bg-5{background:#d2a8ff}.bg-6{background:#56d4dd}.bg-7{background:#d7e1df}
-            .bg-8{background:#8b949e}.bg-9{background:#ff8f8f}.bg-10{background:#70e39b}.bg-11{background:#eac55f}.bg-12{background:#79c0ff}.bg-13{background:#dcbdfb}.bg-14{background:#76e3ea}.bg-15{background:#fff}
-            .fg-inv{color:#050707}.bg-inv{background:#d7e1df}.b{font-weight:700}.dim{opacity:.6}.i{font-style:italic}.u{text-decoration:underline}
+            .fg-0{color:#26302b}.fg-1{color:var(--danger)}.fg-2{color:var(--primary)}.fg-3{color:var(--amber)}.fg-4{color:#70b7ff}.fg-5{color:var(--accent-2)}.fg-6{color:var(--accent)}.fg-7{color:var(--muted)}
+            .fg-8{color:#66746c}.fg-9{color:#ff7d7c}.fg-10{color:#b7ff91}.fg-11{color:#ffd064}.fg-12{color:#8fc7ff}.fg-13{color:#ff99d8}.fg-14{color:#8fffff}.fg-15{color:#fffbe5}
+            .bg-0{background:#26302b}.bg-1{background:var(--danger)}.bg-2{background:var(--primary)}.bg-3{background:var(--amber)}.bg-4{background:#70b7ff}.bg-5{background:var(--accent-2)}.bg-6{background:var(--accent)}.bg-7{background:var(--muted)}
+            .bg-8{background:#66746c}.bg-9{background:#ff7d7c}.bg-10{background:#b7ff91}.bg-11{background:#ffd064}.bg-12{background:#8fc7ff}.bg-13{background:#ff99d8}.bg-14{background:#8fffff}.bg-15{background:#fffbe5}
+            .fg-inv{color:var(--bg)}.bg-inv{background:var(--primary)}.b{font-weight:700}.dim{opacity:.6}.i{font-style:italic}.u{text-decoration:underline}
             </style></head><body><div id="wrap"><pre id="term"></pre><div id="cursor"></div></div>
             <script>
             let cols=0,rows=0,cursor=null,ch=7.2,line=15,scale=1.06,manual=0;
@@ -291,7 +545,7 @@ class MainActivity : ComponentActivity() {
                                 val label = if (pinnedPane.isBlank()) "active" else "pin ${frame.optString("paneId")}"
                                 handler.post {
                                     paneButton.text = label
-                                    status.text = "live"
+                                    setStatus("live")
                                     webView.evaluateJavascript("render(${frame.toString()})", null)
                                 }
                             } else {
@@ -316,7 +570,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun postStatus(text: String) {
-        handler.post { status.text = text.take(28) }
+        handler.post { setStatus(text) }
     }
 
     private fun sendInputText() {

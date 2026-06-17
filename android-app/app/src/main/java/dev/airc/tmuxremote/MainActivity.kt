@@ -42,7 +42,13 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 
 data class Profile(
     val name: String,
@@ -99,6 +105,13 @@ class MainActivity : ComponentActivity() {
     private var pinnedPane: String = ""
     private var etag: String? = null
     private var polling = false
+    private var ws: WebSocket? = null
+    @Volatile private var wsConnected = false
+    @Volatile private var wsConnecting = false
+    private var lastWsAttemptAt = 0L
+    private val httpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
+    }
     private var lastGoodUrl: String = ""
     private var lastLanProbeAt: Long = 0
     private var statusPulse: ObjectAnimator? = null
@@ -131,6 +144,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         polling = false
+        closeWebSocket()
         super.onDestroy()
     }
 
@@ -164,6 +178,7 @@ class MainActivity : ComponentActivity() {
         etag = null
         lastGoodUrl = ""
         prefs().edit().remove("lastGoodUrl").apply()
+        closeWebSocket()
         setStatus("paired")
         startPolling()
     }
@@ -631,11 +646,16 @@ class MainActivity : ComponentActivity() {
 
     private fun pollOnce() {
         if (!polling) return
+        if (wsConnected) {
+            // The websocket streams frames; keep a slow watchdog so HTTP polling resumes if it drops.
+            handler.postDelayed({ pollOnce() }, 1000)
+            return
+        }
         val current = profile ?: return
         thread {
+            var handled = false
             try {
                 val query = if (pinnedPane.isNotBlank()) "?pane=${URLEncoder.encode(pinnedPane, "UTF-8")}" else ""
-                var handled = false
                 var lastError = "offline"
                 for (baseUrl in endpointUrls(current)) {
                     try {
@@ -656,19 +676,7 @@ class MainActivity : ComponentActivity() {
                             rememberEndpoint(baseUrl)
                             etag = connection.getHeaderField("ETag")
                             val json = connection.inputStream.bufferedReader().readText()
-                            val frame = JSONObject(json)
-                            if (frame.optBoolean("ok")) {
-                                val label = if (pinnedPane.isBlank()) "active" else "pin ${frame.optString("paneId")}"
-                                handler.post {
-                                    paneButton.text = label
-                                    setStatus("live")
-                                    webView.evaluateJavascript("render(${frame.toString()})") { result ->
-                                        anchorWebViewIfFollowing(result)
-                                    }
-                                }
-                            } else {
-                                postStatus(frame.optString("error", "error"))
-                            }
+                            renderFrame(JSONObject(json))
                             handled = true
                             break
                         } else {
@@ -682,9 +690,92 @@ class MainActivity : ComponentActivity() {
             } catch (error: Exception) {
                 postStatus(error.message ?: "offline")
             } finally {
+                // Only upgrade to a websocket once an HTTP poll has confirmed a reachable endpoint,
+                // and back off so a server that allows HTTP but blocks the upgrade isn't hammered.
+                if (handled && !wsConnected && !wsConnecting && lastGoodUrl.isNotBlank() &&
+                    System.currentTimeMillis() - lastWsAttemptAt > 5000) {
+                    val url = lastGoodUrl
+                    handler.post { connectWebSocket(url) }
+                }
                 handler.postDelayed({ pollOnce() }, 750)
             }
         }
+    }
+
+    private fun renderFrame(frame: JSONObject) {
+        if (frame.optBoolean("ok")) {
+            val label = if (pinnedPane.isBlank()) "active" else "pin ${frame.optString("paneId")}"
+            handler.post {
+                paneButton.text = label
+                setStatus("live")
+                webView.evaluateJavascript("render($frame)") { result ->
+                    anchorWebViewIfFollowing(result)
+                }
+            }
+        } else {
+            postStatus(frame.optString("error", "error"))
+        }
+    }
+
+    private fun connectWebSocket(baseUrl: String) {
+        if (wsConnected || wsConnecting) return
+        val current = profile ?: return
+        wsConnecting = true
+        lastWsAttemptAt = System.currentTimeMillis()
+        val request = Request.Builder()
+            .url("$baseUrl/api/tmux/ws")
+            .header("X-Airc-Auth", current.token)
+            .build()
+        ws = httpClient.newWebSocket(request, wsListener)
+    }
+
+    private val wsListener = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            wsConnecting = false
+            wsConnected = true
+            sendViewState(webSocket)
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            handleWsMessage(text)
+        }
+
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(1000, null)
+            markWsDown()
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            markWsDown()
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            markWsDown()
+        }
+    }
+
+    private fun handleWsMessage(text: String) {
+        val msg = try { JSONObject(text) } catch (_: Exception) { return }
+        when (msg.optString("type")) {
+            "frame" -> msg.optJSONObject("frame")?.let { renderFrame(it) }
+            "heartbeat" -> postStatus("idle")
+            "error" -> postStatus(msg.optString("error", "error"))
+        }
+    }
+
+    private fun sendViewState(socket: WebSocket? = ws) {
+        socket?.send(JSONObject().put("type", "view").put("pane", pinnedPane).toString())
+    }
+
+    private fun markWsDown() {
+        wsConnected = false
+        wsConnecting = false
+        ws = null
+    }
+
+    private fun closeWebSocket() {
+        ws?.close(1000, null)
+        markWsDown()
     }
 
     private fun postStatus(text: String) {
@@ -780,6 +871,7 @@ class MainActivity : ComponentActivity() {
                                     pinnedPane = panes[which].paneId
                                     prefs().edit().putString("pinnedPane", pinnedPane).apply()
                                     etag = null
+                                    sendViewState()
                                     paneButton.text = if (pinnedPane.isBlank()) "active" else panes[which].label
                                 }
                                 .show()

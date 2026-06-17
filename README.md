@@ -72,17 +72,17 @@ base URL and token after manual entry or QR scan.
 
 ## Build And Install
 
-Android SDK root on this machine is `/home/k/android`. Build from
+Android SDK root on this machine is `~/android`. Build from
 `android-app/`:
 
 ```sh
 cd android-app
 ./gradlew assembleDebug
-/home/k/android/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
+~/android/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Gradle is installed at `/home/k/android/gradle-9.4.1`; JDK 17 is installed at
-`/home/k/android/jdk-17`; the Gradle wrapper is checked in for normal builds.
+Gradle is installed at `~/android/gradle-9.4.1`; JDK 17 is installed at
+`~/android/jdk-17`; the Gradle wrapper is checked in for normal builds.
 
 ## Files
 

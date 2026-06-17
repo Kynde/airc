@@ -41,6 +41,9 @@ Use `tools/airc on --session airc` for configured ngrok mode. Use
 network; local mode binds `0.0.0.0`, disables ngrok, and makes the QR prefer a
 LAN URL instead of `127.0.0.1`.
 
+Airc defaults to port `8090` so it can run alongside `../swyd`, which defaults
+to `8080`.
+
 ## Android App
 
 The app has:
@@ -57,19 +60,6 @@ For Samsung S23 portrait, a tmux size around `58x50` has worked well. Tmux
 window size is the main readability lever; the app then fits that grid into the
 available screen.
 
-## Server API
-
-The server exposes:
-
-- `GET /api/tmux/frame`
-- `GET /api/tmux/panes`
-- `POST /api/tmux/input`
-- `GET /api/pairing`
-- `GET /healthz`
-
-Auth uses the generated token in `config.json`. The Android app stores the
-base URL and token after manual entry or QR scan.
-
 ## Build And Install
 
 Android SDK root on this machine is `~/android`. Build from
@@ -83,6 +73,11 @@ cd android-app
 
 Gradle is installed at `~/android/gradle-9.4.1`; JDK 17 is installed at
 `~/android/jdk-17`; the Gradle wrapper is checked in for normal builds.
+
+## More Docs
+
+- [Operations](docs/operations.md): running, pairing, sizing, troubleshooting
+- [Development](docs/development.md): architecture, APIs, build/test notes
 
 ## Files
 

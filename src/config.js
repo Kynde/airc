@@ -9,7 +9,7 @@ const DEFAULT_CONFIG_PATH = path.join(__dirname, "..", "config.json");
 
 const DEFAULTS = {
   host: "127.0.0.1",
-  port: 8080,
+  port: 8090,
   session: "swyd",
   pollMs: 700,
   pollIdleMaxMs: 2500,

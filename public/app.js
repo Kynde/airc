@@ -13,6 +13,7 @@
     fontMinus: document.getElementById("font-minus"),
     fontPlus: document.getElementById("font-plus"),
     fontFit: document.getElementById("font-fit"),
+    controlsToggle: document.getElementById("controls-toggle"),
     themeToggle: document.getElementById("theme-toggle"),
     pauseToggle: document.getElementById("pause-toggle"),
     termWrap: document.getElementById("term-wrap"),
@@ -51,6 +52,7 @@
   let pinned = localStorage.getItem("airc_pin") || "";
   let fontMode = localStorage.getItem("airc_font_mode") || "auto";
   let fontSize = Number(localStorage.getItem("airc_font_size")) || 13;
+  let controlsVisible = localStorage.getItem("airc_controls_visible") === "1";
   let chRatio = 0.6;
   let lastCols = 0;
   let lastRows = 0;
@@ -120,6 +122,15 @@
     el.term.style.fontSize = `${size}px`;
     el.fontFit.classList.toggle("active", fontMode === "auto" && !cfg.resizeToViewport);
     placeCursor();
+  }
+
+  function applyControlsVisibility() {
+    const visible = cfg.canControl && controlsVisible;
+    el.controlsToggle.hidden = !cfg.canControl;
+    el.controlsToggle.classList.toggle("active", visible);
+    el.controlsToggle.textContent = visible ? "ctrl on" : "ctrl";
+    el.controlBar.hidden = !visible;
+    applyFont();
   }
 
   function viewedTarget() {
@@ -321,6 +332,11 @@
     localStorage.setItem("airc_font_mode", fontMode);
     applyFont();
   });
+  el.controlsToggle.addEventListener("click", () => {
+    controlsVisible = !controlsVisible;
+    localStorage.setItem("airc_controls_visible", controlsVisible ? "1" : "0");
+    applyControlsVisibility();
+  });
   el.themeToggle.addEventListener("click", () => {
     const next = document.body.classList.contains("theme-day") ? "dark" : "day";
     localStorage.setItem("airc_theme", next);
@@ -358,7 +374,7 @@
         return;
       }
       cfg = { ...cfg, ...(await response.json()) };
-      el.controlBar.hidden = !cfg.canControl;
+      applyControlsVisibility();
     } catch {
       // Polling will keep retrying.
     }

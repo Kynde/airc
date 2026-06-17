@@ -22,6 +22,16 @@ tools/airc on --session airc
 tools/airc pair-web
 ```
 
+Start local LAN mode:
+
+```sh
+tools/airc local --session airc
+tools/airc pair-app
+```
+
+`tools/airc local` prepends `--host 0.0.0.0 --no-ngrok`. Use `tools/airc on`
+when the configured ngrok tunnel should be started by the server.
+
 Common commands:
 
 ```sh
@@ -36,14 +46,17 @@ Runtime state is written to ignored files:
 - `.airc-server.json`
 - `.airc-server.log`
 
+Airc does not currently install or use a systemd unit. The wrapper starts a
+detached Node process and manages it through those state files.
+
 ## Pairing
 
 Pairing commands print QR codes plus manual values:
 
-- `tools/airc pair-app`: Android JSON with the control token, public URL, and
-  LAN URLs.
-- `tools/airc pair-web`: browser URL/token with the view token.
-- `tools/airc pair-web-control`: browser URL/token with the control token.
+- `tools/airc pair-app`: Android JSON with the control token, preferred URL,
+  public URL, and LAN URLs.
+- `tools/airc pair-web`: browser QR/URL/token with the view token.
+- `tools/airc pair-web-control`: browser QR/URL/token with the control token.
 
 `tools/airc pair` remains an alias for `pair-app`. The Android app stores the
 profile after QR scan or manual entry.
@@ -52,7 +65,7 @@ Re-pair after changing:
 
 - server URL
 - server port
-- auth token
+- `viewToken` or `controlToken`
 
 Airc stores separate `viewToken` and `controlToken` values. The view token can
 only load the terminal viewer. The control token can also send text and quick
@@ -63,6 +76,10 @@ In local mode, QR payloads should use a LAN URL such as `http://10.x.x.x:8080`.
 If the phone saves `127.0.0.1`, re-pair from `tools/airc local ...`; on Android,
 `127.0.0.1` means the phone itself.
 
+For Android fallback between LAN and public/ngrok access, pair while the payload
+contains both URL families. If the app was paired from `tools/airc local`, it may
+only know LAN URLs because local mode disables ngrok.
+
 ## App Usage
 
 - The app follows the active tmux pane by default.
@@ -72,6 +89,20 @@ If the phone saves `127.0.0.1`, re-pair from `tools/airc local ...`; on Android,
 - `A-` and `A+` adjust app-side font rendering only; they do not resize tmux.
 - If the pairing payload includes both LAN and public URLs, the app tries LAN
   first and falls back to the public URL.
+- The app tries LAN again on later requests, so returning to the same network
+  switches back automatically.
+
+## Browser Usage
+
+Use `tools/airc pair-web` for read-only browser viewing. This is the expected
+Tesla bookmark flow because Tesla local/private LAN access was unreliable in
+testing.
+
+Use `tools/airc pair-web-control` only for trusted browsers. It prints a QR and
+URL with the control token; it does not open a browser from the CLI. Browser
+controls send input to the currently viewed pane.
+
+`/probe` is available after auth for browser diagnostics.
 
 ## Display Sizing
 
@@ -89,10 +120,15 @@ If scrolling appears, reduce tmux rows/columns or use `A-`.
 
 - Another service will not start while Airc is running: Airc defaults to port
   `8080`. Check for old manual runs on the same port.
+- ngrok tunnel does not come up: check `tail -f "$(tools/airc logs)"`. The
+  ngrok free tier allows only one active agent session, so a manually started
+  ngrok can block Airc's supervised child.
 - QR scan is blurry: move the phone farther away until the QR is sharp, or use
   manual pairing with the printed `baseUrl` and `token`.
 - App cannot connect on WLAN: confirm the laptop server was started with
   `tools/airc local`, and confirm the phone is on the same network.
+- Tesla cannot connect to a LAN URL: use ngrok/public browser pairing. Tesla
+  hotspot-local/private address access failed in earlier tests.
 - ADB install fails with `unauthorized`: accept the USB debugging prompt on the
   phone, then rerun `adb install -r ...`.
 - Check server state with `tools/airc status`.

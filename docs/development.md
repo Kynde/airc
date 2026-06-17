@@ -4,15 +4,28 @@
 
 - `src/server.js`: HTTP routes, lifecycle, health, pairing
 - `src/tmux.js`: tmux capture, pane listing, resize, input forwarding
+- `src/ansi.js`: ANSI SGR to HTML conversion
+- `src/auth.js`: token extraction and `authLevel`
 - `src/config.js`: config defaults, CLI args, pairing payloads
 - `src/ngrok.js`: supervised ngrok child process
-- `public/`: browser/WebView terminal assets
+- `public/`: browser viewer, probe page, terminal assets
 - `tools/airc`: background server wrapper
 - `android-app/`: native Kotlin Android client
 
 The browser viewer is the canonical Swyd-style terminal UI. The Android app
 renders terminal frames in a WebView and keeps controls native, while sharing
 the same server frame/input APIs.
+
+Runtime paths:
+
+```text
+Android app -> LAN URL or ngrok URL -> Node server -> tmux
+Browser/Tesla -> ngrok URL -> Node server -> tmux
+```
+
+The server can supervise ngrok when `ngrok.enabled` is true. `tools/airc` itself
+is not systemd-backed; it starts a detached Node process and tracks pid/state/log
+files.
 
 ## Ports And Pairing
 
@@ -37,6 +50,9 @@ Pairing payload behavior:
 - `lanUrls` and `publicUrl` are included so Android can try LAN first and fall
   back to ngrok/public access.
 - Browser pairing commands print QR/URL/token values instead of Android JSON.
+- `pair-app` uses `controlToken`.
+- `pair-web` uses `viewToken`.
+- `pair-web-control` uses `controlToken`.
 
 ## Server API
 
@@ -49,6 +65,12 @@ Pairing payload behavior:
 - `GET /api/probe/poll`
 - `GET /healthz`
 
+Unauthenticated static assets:
+
+- `/app.js`
+- `/app.css`
+- `/fonts/FiraCode-Regular.ttf`
+
 Auth uses generated tokens in `config.json`. `viewToken` can view only;
 `controlToken` can view and send input. Requests can use:
 
@@ -57,10 +79,17 @@ Auth uses generated tokens in `config.json`. `viewToken` can view only;
 - `X-Swyd-Auth: <token>` during migration
 - `Authorization: Bearer <token>`
 - `airc_auth` cookie
+- `swyd_auth` cookie during migration
 
 `GET /api/config` returns `canControl` based on the token presented. Browser UI
 controls are shown only when `canControl` is true. `/api/tmux/input` and
 `/api/pairing` require the control token and return `404` otherwise.
+
+Unauthorized protected routes return `404`, not `401`, to avoid advertising the
+private surface.
+
+`GET /api/config` also returns non-secret URL metadata (`publicUrl`, `lanUrls`)
+for clients.
 
 Input payloads:
 
@@ -73,6 +102,19 @@ Input payloads:
 ```
 
 Text uses `tmux send-keys -l`; named keys use `tmux send-keys`.
+
+## Frame Flow
+
+1. Client polls `/api/tmux/frame`.
+2. Server resolves the active pane for `config.session`, unless `?pane=%N`
+   pins a concrete pane.
+3. Server runs `tmux capture-pane -p -e -t <pane-id>`.
+4. ANSI SGR is converted to HTML.
+5. Response includes pane metadata, cursor position, HTML, and `ETag`.
+6. Client sends `If-None-Match`; unchanged frames get `304`.
+
+See [Implementation Notes](implementation-notes.md) for tmux edge cases and
+sizing details.
 
 ## Build And Test
 

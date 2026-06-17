@@ -4,8 +4,9 @@
 
 # Airc Tmux Remote
 
-AI remote control for a tmux session, typically an AI coding tool (codex, claude code, etc) using a phone or browser.
-Kind of like the claude remote control, but actually works and not strictly tied to any specific AI tool.
+AI remote control for a tmux session, typically an AI coding tool (codex,
+claude code, etc) using a phone, tablet, or browser. Kind of like the Claude
+remote control, but not tied to a specific AI tool.
 
 ## Overview
 
@@ -26,6 +27,13 @@ tools/airc pair-app
 Then open **Airc Tmux** on the phone, tap `pair`, and scan the QR. The app
 stores the URL/token, so pairing is only needed again when the server address or
 token changes.
+
+Start configured ngrok/public mode for browser viewing:
+
+```sh
+tools/airc on --session airc
+tools/airc pair-web
+```
 
 Useful commands:
 
@@ -63,14 +71,19 @@ The app has:
 
 ## Browser Viewer
 
-The browser viewer is the merged Swyd-style interface: active-pane following,
-pinning, theme, pause, font fit/manual sizing, and ETag polling. With a
-`viewToken` it is read-only. With a `controlToken` it also shows text, Up, Down,
-and Enter controls that target the currently viewed pane.
+The browser viewer is the merged Swyd-style interface for Tesla, tablets, and
+desktop browsers: active-pane following, pinning, theme, pause, font
+fit/manual sizing, and ETag polling. With a `viewToken` it is read-only. With a
+`controlToken` it also shows text, Up, Down, and Enter controls that target the
+currently viewed pane.
 
 For Samsung S23 portrait, a tmux size around `58x50` has worked well. Tmux
 window size is the main readability lever; the app then fits that grid into the
 available screen.
+
+<p align="center">
+  <img src="docs/airc_ui_in_tesla.jpg" alt="Airc in action in a Tesla" width="800" height="600">
+</p>
 
 ## Build And Install
 
@@ -88,8 +101,13 @@ Gradle is installed at `~/android/gradle-9.4.1`; JDK 17 is installed at
 
 ## More Docs
 
+- [Docs index](docs/README.md): recommended reading order
 - [Operations](docs/operations.md): running, pairing, sizing, troubleshooting
 - [Development](docs/development.md): architecture, APIs, build/test notes
+- [Implementation Notes](docs/implementation-notes.md): tmux capture, auth,
+  polling, sizing
+- [Tesla Browser Findings](docs/tesla-browser.md): in-car browser/network notes
+- [Future Work](docs/future-work.md): known next improvements
 
 ## Files
 

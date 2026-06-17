@@ -31,7 +31,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -129,6 +128,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val cameraPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            qrLauncher.launch(Intent(this, QrScanActivity::class.java))
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         profile = loadProfile()
@@ -183,9 +188,16 @@ class MainActivity : ComponentActivity() {
         startPolling()
     }
 
-    private fun buildUi() {
+    // statusBarColor/navigationBarColor are deprecated (no-ops under edge-to-edge on API 35+) but
+    // still tint the bars on the older devices this app supports, so keep them with a scoped suppress.
+    @Suppress("DEPRECATION")
+    private fun applySystemBarColors() {
         window.statusBarColor = Chrome.surface
         window.navigationBarColor = Chrome.bg
+    }
+
+    private fun buildUi() {
+        applySystemBarColors()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Chrome.bg)
@@ -918,17 +930,10 @@ class MainActivity : ComponentActivity() {
 
     private fun scanQr() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 41)
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             return
         }
         qrLauncher.launch(Intent(this, QrScanActivity::class.java))
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 41 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            scanQr()
-        }
     }
 
     private fun parseProfile(raw: String): Profile {

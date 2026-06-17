@@ -63,6 +63,7 @@ class MainActivity : ComponentActivity() {
     private class TerminalWebView(context: Context) : WebView(context) {
         fun maxScrollX(): Int = (computeHorizontalScrollRange() - width).coerceAtLeast(0)
         fun maxScrollY(): Int = (computeVerticalScrollRange() - height).coerceAtLeast(0)
+        fun contentHeight(): Int = computeVerticalScrollRange()
     }
 
     private object Chrome {
@@ -99,6 +100,7 @@ class MainActivity : ComponentActivity() {
     private var statusDetail: String = "connecting"
     private var followWebViewLeft = true
     private var followWebViewBottom = true
+    private var renderedAnchorTop = 0
     private var touchingWebView = false
     private val monoTypeface: Typeface by lazy { Typeface.create("monospace", Typeface.NORMAL) }
 
@@ -229,6 +231,8 @@ class MainActivity : ComponentActivity() {
                 false
             }
             setOnScrollChangeListener { _, _, _, _, _ ->
+                // Only react to user-driven scrolling. Reflow/programmatic scroll changes (e.g. a
+                // font bump growing the content) must not flip the follow state against a stale anchor.
                 if (touchingWebView) updateWebViewFollow()
             }
             loadDataWithBaseURL("https://local.airc/", terminalHtml(), "text/html", "UTF-8", null)
@@ -495,28 +499,48 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun adjustFont(delta: Int) {
-        webView.evaluateJavascript("window.bumpFont && window.bumpFont($delta)") {
-            anchorWebViewIfFollowing()
+        webView.evaluateJavascript("window.bumpFont && window.bumpFont($delta)") { result ->
+            anchorWebViewIfFollowing(result)
         }
     }
 
     private fun updateWebViewFollow() {
         val maxX = webView.maxScrollX()
-        val maxY = webView.maxScrollY()
         followWebViewLeft = webView.scrollX <= dp(2) || maxX == 0
-        followWebViewBottom = webView.scrollY >= maxY - dp(2)
+        // The native scroll range extends past the rendered bottom into blank grid rows, so anchor
+        // sits above the true scroll end. Treat at-or-below the anchor as following so scrolling
+        // back down always reacquires the lock; only scrolling up (into history) releases it.
+        followWebViewBottom = webView.scrollY >= renderedAnchorTop - dp(2)
     }
 
-    private fun anchorWebViewIfFollowing() {
+    // JS reports rendered-content bottom and full grid height in CSS pixels; the WebView's own
+    // viewport/scroll metrics are unreliable here, so we map that CSS ratio onto the native scroll
+    // range to anchor on rendered content instead of the blank grid bottom.
+    private fun anchorWebViewIfFollowing(anchorJson: String?) {
+        val anchor = parseAnchor(anchorJson) ?: return
         webView.post {
-            val x = if (followWebViewLeft) 0 else webView.scrollX
-            val y = if (followWebViewBottom) webView.maxScrollY() else webView.scrollY
-            webView.scrollTo(x, y)
-            webView.postDelayed({
-                val settledX = if (followWebViewLeft) 0 else webView.scrollX
-                val settledY = if (followWebViewBottom) webView.maxScrollY() else webView.scrollY
-                webView.scrollTo(settledX, settledY)
-            }, 80)
+            applyAnchor(anchor)
+            webView.postDelayed({ applyAnchor(anchor) }, 80)
+        }
+    }
+
+    private fun applyAnchor(anchor: Pair<Double, Double>) {
+        val (renderedBottomCss, fullHeightCss) = anchor
+        val fullNative = webView.contentHeight()
+        val nativeBottom = if (fullHeightCss > 0) renderedBottomCss / fullHeightCss * fullNative else fullNative.toDouble()
+        renderedAnchorTop = (nativeBottom - webView.height).toInt().coerceIn(0, webView.maxScrollY())
+        if (!followWebViewBottom || touchingWebView) return
+        val x = if (followWebViewLeft) 0 else webView.scrollX
+        webView.scrollTo(x, renderedAnchorTop)
+    }
+
+    private fun parseAnchor(anchorJson: String?): Pair<Double, Double>? {
+        if (anchorJson.isNullOrBlank() || anchorJson == "null") return null
+        return try {
+            val arr = JSONArray(anchorJson)
+            if (arr.length() < 2) null else arr.getDouble(0) to arr.getDouble(1)
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -539,22 +563,26 @@ class MainActivity : ComponentActivity() {
             .fg-inv{color:var(--bg)}.bg-inv{background:var(--primary)}.b{font-weight:700}.dim{opacity:.6}.i{font-style:italic}.u{text-decoration:underline}
             </style></head><body><div id="wrap"><pre id="term"></pre><div id="cursor"></div></div>
             <script>
-            let cols=0,rows=0,cursor=null,ch=7.2,line=15,scale=1.06,manual=0,followLeft=true,followBottom=true;
-            const lh=1.16;
-            function scroller(){return document.scrollingElement||document.documentElement;}
-            function maxTop(){const s=scroller();return Math.max(0,s.scrollHeight-s.clientHeight);}
-            function updateFollow(){const s=scroller();followLeft=s.scrollLeft<=2;followBottom=s.scrollTop>=maxTop()-2;}
-            function shouldNativeAnchor(){return followLeft&&followBottom;}
-            function setFollowScroll(){const s=scroller();const left=followLeft?0:s.scrollLeft;const top=followBottom?maxTop():s.scrollTop;s.scrollLeft=left;s.scrollTop=top;scrollTo(left,top);}
-            function applyFollow(){setFollowScroll();requestAnimationFrame(setFollowScroll);}
+            let cols=0,rows=0,cursor=null,ch=7.2,line=15,scale=1.06,fontMode='auto',fontSize=13;
+            const lh=1.16,FMIN=7,FMAX=24;
+            function term(){return document.getElementById('term');}
+            function wrap(){return document.getElementById('wrap');}
+            // Bottom of actually-rendered content (CSS px), so the native side can anchor here
+            // rather than scrolling down into the blank grid rows below it.
+            function renderedBottom(){const t=term();return t.offsetTop+Math.max(line,t.getBoundingClientRect().height)+9;}
+            // Full grid height (CSS px); native maps the renderedBottom/fullHeight ratio onto its scroll range.
+            function fullHeight(){const w=wrap();return w.offsetTop+w.getBoundingClientRect().height;}
+            function anchorTarget(){return [renderedBottom(),fullHeight()];}
             function measure(size){const p=document.createElement('span');p.style.cssText="position:absolute;visibility:hidden;white-space:pre;font:"+size+"px 'Fira Code',monospace";p.textContent='0'.repeat(50);document.body.appendChild(p);const w=p.getBoundingClientRect().width;p.remove();return w>0?w/50:size*.6;}
-            function sizeGrid(){const w=20+cols*ch,h=18+rows*line,wrap=document.getElementById('wrap');wrap.style.minWidth=w+'px';wrap.style.minHeight=h+'px';document.getElementById('term').style.minHeight=(rows*line)+'px';}
+            function sizeGrid(){const w=20+cols*ch,h=18+rows*line,el=wrap();el.style.minWidth=w+'px';el.style.minHeight=h+'px';}
             function computedLine(t,size){const v=parseFloat(getComputedStyle(t).lineHeight);return Number.isFinite(v)&&v>0?v:size*lh;}
-            function fit(){ if(cols>0&&rows>0){ const base=(innerWidth-20)/(cols*.6); const s=Math.max(7,Math.min(24,Math.floor((base*scale+manual)*2)/2)); const t=document.getElementById('term'); t.style.fontSize=s+'px'; ch=measure(s); line=computedLine(t,s); sizeGrid(); place(); applyFollow(); } }
-            window.bumpFont=function(delta){ manual=Math.max(-8,Math.min(8,manual+delta)); fit(); return shouldNativeAnchor(); };
-            function place(){ const c=document.getElementById('cursor'),t=document.getElementById('term'); if(!cursor){c.style.display='none';return} c.style.display='block'; c.style.left=(t.offsetLeft+cursor.x*ch)+'px'; c.style.top=(t.offsetTop+cursor.y*line)+'px'; c.style.width=ch+'px'; c.style.height=line+'px'; }
-            function render(frame){ document.getElementById('term').innerHTML=frame.html||''; cols=frame.cols||0; rows=frame.rows||0; cursor=frame.cursor; fit(); applyFollow(); return shouldNativeAnchor(); }
-            addEventListener('scroll',updateFollow,{passive:true});
+            // Auto-fit picks the largest size that fits all columns across the viewport width.
+            function autoSize(){ const base=(innerWidth-20)/(cols*.6); return Math.max(FMIN,Math.min(FMAX,Math.floor(base*scale*2)/2)); }
+            function fit(){ if(cols>0&&rows>0){ const s=fontMode==='manual'?fontSize:autoSize(); const t=term(); t.style.fontSize=s+'px'; ch=measure(s); line=computedLine(t,s); sizeGrid(); place(); } }
+            // A-/A+ nudge the current displayed size by 1px (web parity) and lock to manual sizing.
+            window.bumpFont=function(delta){ const cur=parseFloat(term().style.fontSize)||autoSize(); fontSize=Math.max(FMIN,Math.min(FMAX,cur+delta)); fontMode='manual'; fit(); return anchorTarget(); };
+            function place(){ const c=document.getElementById('cursor'),t=term(); if(!cursor){c.style.display='none';return} c.style.display='block'; c.style.left=(t.offsetLeft+cursor.x*ch)+'px'; c.style.top=(t.offsetTop+cursor.y*line)+'px'; c.style.width=ch+'px'; c.style.height=line+'px'; }
+            function render(frame){ term().innerHTML=frame.html||''; cols=frame.cols||0; rows=frame.rows||0; cursor=frame.cursor; fit(); return anchorTarget(); }
             addEventListener('resize',fit);
             </script></body></html>
         """.trimIndent()
@@ -599,8 +627,8 @@ class MainActivity : ComponentActivity() {
                                 handler.post {
                                     paneButton.text = label
                                     setStatus("live")
-                                    webView.evaluateJavascript("render(${frame.toString()})") {
-                                        anchorWebViewIfFollowing()
+                                    webView.evaluateJavascript("render(${frame.toString()})") { result ->
+                                        anchorWebViewIfFollowing(result)
                                     }
                                 }
                             } else {

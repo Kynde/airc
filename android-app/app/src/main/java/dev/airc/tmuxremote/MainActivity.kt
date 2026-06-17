@@ -549,9 +549,10 @@ class MainActivity : ComponentActivity() {
             function applyFollow(){setFollowScroll();requestAnimationFrame(setFollowScroll);}
             function measure(size){const p=document.createElement('span');p.style.cssText="position:absolute;visibility:hidden;white-space:pre;font:"+size+"px 'Fira Code',monospace";p.textContent='0'.repeat(50);document.body.appendChild(p);const w=p.getBoundingClientRect().width;p.remove();return w>0?w/50:size*.6;}
             function sizeGrid(){const w=20+cols*ch,h=18+rows*line,wrap=document.getElementById('wrap');wrap.style.minWidth=w+'px';wrap.style.minHeight=h+'px';document.getElementById('term').style.minHeight=(rows*line)+'px';}
-            function fit(){ if(cols>0&&rows>0){ const base=(innerWidth-20)/(cols*.6); const s=Math.max(7,Math.min(24,Math.floor((base*scale+manual)*2)/2)); const t=document.getElementById('term'); t.style.fontSize=s+'px'; ch=measure(s); line=s*lh; sizeGrid(); place(); applyFollow(); } }
+            function computedLine(t,size){const v=parseFloat(getComputedStyle(t).lineHeight);return Number.isFinite(v)&&v>0?v:size*lh;}
+            function fit(){ if(cols>0&&rows>0){ const base=(innerWidth-20)/(cols*.6); const s=Math.max(7,Math.min(24,Math.floor((base*scale+manual)*2)/2)); const t=document.getElementById('term'); t.style.fontSize=s+'px'; ch=measure(s); line=computedLine(t,s); sizeGrid(); place(); applyFollow(); } }
             window.bumpFont=function(delta){ manual=Math.max(-8,Math.min(8,manual+delta)); fit(); return shouldNativeAnchor(); };
-            function place(){ const c=document.getElementById('cursor'); if(!cursor){c.style.display='none';return} c.style.display='block'; c.style.left=(8+cursor.x*ch)+'px'; c.style.top=(8+cursor.y*line)+'px'; c.style.width=ch+'px'; c.style.height=line+'px'; }
+            function place(){ const c=document.getElementById('cursor'),t=document.getElementById('term'); if(!cursor){c.style.display='none';return} c.style.display='block'; c.style.left=(t.offsetLeft+cursor.x*ch)+'px'; c.style.top=(t.offsetTop+cursor.y*line)+'px'; c.style.width=ch+'px'; c.style.height=line+'px'; }
             function render(frame){ document.getElementById('term').innerHTML=frame.html||''; cols=frame.cols||0; rows=frame.rows||0; cursor=frame.cursor; fit(); applyFollow(); return shouldNativeAnchor(); }
             addEventListener('scroll',updateFollow,{passive:true});
             addEventListener('resize',fit);

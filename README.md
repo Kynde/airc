@@ -4,6 +4,11 @@
 
 # Airc Tmux Remote
 
+Allows user to control a tmux session, typically an AI coding tool (codex, claude code, etc) using a phone.
+Kind of like the claude remote control, but actually works and not strictly tied to any specific AI tool.
+
+## Overview
+
 Private Android remote display/input for a laptop tmux session. The laptop runs
 a small Node server that captures tmux panes and accepts authenticated input;
 the phone runs a native Kotlin app with a WebView terminal, pane picker, Android

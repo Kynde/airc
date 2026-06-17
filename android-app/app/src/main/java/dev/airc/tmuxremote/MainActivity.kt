@@ -84,6 +84,11 @@ class MainActivity : ComponentActivity() {
         const val radiusDp = 6
     }
 
+    private companion object {
+        const val FONT_MIN = 7f
+        const val FONT_MAX = 24f
+    }
+
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var webView: TerminalWebView
     private lateinit var status: TextView
@@ -485,6 +490,12 @@ class MainActivity : ComponentActivity() {
                 letterSpacing = 0.04f
                 setPadding(dp(2), 0, dp(2), dp(8))
             })
+            addView(chromeButton("auto-fit font", ButtonKind.Key) {
+                popup.dismiss()
+                resetFontToAuto()
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(38)).apply {
+                bottomMargin = dp(7)
+            })
             addView(chromeButton("pair laptop", ButtonKind.Key) {
                 popup.dismiss()
                 showPairDialog()
@@ -501,6 +512,24 @@ class MainActivity : ComponentActivity() {
     private fun adjustFont(delta: Int) {
         webView.evaluateJavascript("window.bumpFont && window.bumpFont($delta)") { result ->
             anchorWebViewIfFollowing(result)
+            parseFontSize(result)?.let { prefs().edit().putFloat("fontSizePx", it).apply() }
+        }
+    }
+
+    private fun resetFontToAuto() {
+        prefs().edit().remove("fontSizePx").apply()
+        webView.evaluateJavascript("window.resetFont && window.resetFont()") { result ->
+            anchorWebViewIfFollowing(result)
+        }
+    }
+
+    private fun parseFontSize(json: String?): Float? {
+        if (json.isNullOrBlank() || json == "null") return null
+        return try {
+            val arr = JSONArray(json)
+            if (arr.length() >= 3) arr.getDouble(2).toFloat() else null
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -545,6 +574,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun terminalHtml(): String {
+        val savedFont = prefs().getFloat("fontSizePx", 0f)
+        val hasManual = savedFont in FONT_MIN..FONT_MAX
+        val initMode = if (hasManual) "manual" else "auto"
+        val initSize = if (hasManual) savedFont else 13f
         return """
             <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
@@ -563,7 +596,7 @@ class MainActivity : ComponentActivity() {
             .fg-inv{color:var(--bg)}.bg-inv{background:var(--primary)}.b{font-weight:700}.dim{opacity:.6}.i{font-style:italic}.u{text-decoration:underline}
             </style></head><body><div id="wrap"><pre id="term"></pre><div id="cursor"></div></div>
             <script>
-            let cols=0,rows=0,cursor=null,ch=7.2,line=15,scale=1.06,fontMode='auto',fontSize=13;
+            let cols=0,rows=0,cursor=null,ch=7.2,line=15,scale=1.06,fontMode='$initMode',fontSize=$initSize;
             const lh=1.16,FMIN=7,FMAX=24;
             function term(){return document.getElementById('term');}
             function wrap(){return document.getElementById('wrap');}
@@ -580,7 +613,9 @@ class MainActivity : ComponentActivity() {
             function autoSize(){ const base=(innerWidth-20)/(cols*.6); return Math.max(FMIN,Math.min(FMAX,Math.floor(base*scale*2)/2)); }
             function fit(){ if(cols>0&&rows>0){ const s=fontMode==='manual'?fontSize:autoSize(); const t=term(); t.style.fontSize=s+'px'; ch=measure(s); line=computedLine(t,s); sizeGrid(); place(); } }
             // A-/A+ nudge the current displayed size by 1px (web parity) and lock to manual sizing.
-            window.bumpFont=function(delta){ const cur=parseFloat(term().style.fontSize)||autoSize(); fontSize=Math.max(FMIN,Math.min(FMAX,cur+delta)); fontMode='manual'; fit(); return anchorTarget(); };
+            // Returns [renderedBottom, fullHeight, fontSize] so the native side can persist the size.
+            window.bumpFont=function(delta){ const cur=parseFloat(term().style.fontSize)||autoSize(); fontSize=Math.max(FMIN,Math.min(FMAX,cur+delta)); fontMode='manual'; fit(); return anchorTarget().concat(fontSize); };
+            window.resetFont=function(){ fontMode='auto'; fit(); return anchorTarget(); };
             function place(){ const c=document.getElementById('cursor'),t=term(); if(!cursor){c.style.display='none';return} c.style.display='block'; c.style.left=(t.offsetLeft+cursor.x*ch)+'px'; c.style.top=(t.offsetTop+cursor.y*line)+'px'; c.style.width=ch+'px'; c.style.height=line+'px'; }
             function render(frame){ term().innerHTML=frame.html||''; cols=frame.cols||0; rows=frame.rows||0; cursor=frame.cursor; fit(); return anchorTarget(); }
             addEventListener('resize',fit);

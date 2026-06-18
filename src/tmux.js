@@ -25,11 +25,12 @@ const META_FORMAT = [
   "#{pane_height}",
   "#{cursor_x}",
   "#{cursor_y}",
+  "#{session_name}",
 ].join("\t");
 
 function parseMeta(line) {
   const parts = line.split("\t");
-  if (parts.length < 10 || !parts[0].startsWith("%")) {
+  if (parts.length < 11 || !parts[0].startsWith("%")) {
     return null;
   }
   return {
@@ -43,6 +44,7 @@ function parseMeta(line) {
     height: Number(parts[7]),
     cursorX: Number(parts[8]),
     cursorY: Number(parts[9]),
+    session: parts[10],
   };
 }
 
@@ -84,6 +86,7 @@ async function listPanes(session) {
   return result.stdout.split("\n").filter(Boolean).map((line) => {
     const parts = line.split("\t");
     return {
+      session,
       paneId: parts[0],
       windowIndex: Number(parts[1]),
       windowName: parts[2],
@@ -94,6 +97,19 @@ async function listPanes(session) {
       active: parts[7] === "11",
     };
   });
+}
+
+// List panes across several sessions, tagged by session and grouped in the
+// order requested. Sessions that don't exist are skipped silently.
+async function listPanesForSessions(sessions) {
+  const results = await Promise.all(sessions.map((session) => listPanes(session)));
+  const panes = [];
+  for (const group of results) {
+    if (group) {
+      panes.push(...group);
+    }
+  }
+  return panes;
 }
 
 async function sessionExists(session) {
@@ -126,6 +142,7 @@ module.exports = {
   paneMeta,
   capturePane,
   listPanes,
+  listPanesForSessions,
   sessionExists,
   resizeWindow,
   sendText,

@@ -59,10 +59,18 @@ data class Profile(
 )
 
 data class Pane(
+    val session: String,
     val paneId: String,
     val label: String,
     val active: Boolean
 )
+
+// Rows rendered in the pane picker: a session header (follows that session's
+// active pane) or an indented pane row (pins that exact pane).
+sealed class PickerRow {
+    data class SessionHeader(val session: String, val following: Boolean) : PickerRow()
+    data class PaneRow(val pane: Pane) : PickerRow()
+}
 
 class MainActivity : ComponentActivity() {
     private class TerminalWebView(context: Context) : WebView(context) {
@@ -102,6 +110,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var input: EditText
     private var profile: Profile? = null
     private var pinnedPane: String = ""
+    private var followSession: String = ""
+    private var currentSession: String = ""
     private var etag: String? = null
     private var polling = false
     private var ws: WebSocket? = null
@@ -138,6 +148,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         profile = loadProfile()
         pinnedPane = prefs().getString("pinnedPane", "") ?: ""
+        followSession = prefs().getString("followSession", "") ?: ""
         lastGoodUrl = prefs().getString("lastGoodUrl", "") ?: ""
         buildUi()
         if (profile == null) {
@@ -667,7 +678,11 @@ class MainActivity : ComponentActivity() {
         thread {
             var handled = false
             try {
-                val query = if (pinnedPane.isNotBlank()) "?pane=${URLEncoder.encode(pinnedPane, "UTF-8")}" else ""
+                // session is sent in both cases so a vanished pin falls back to its session.
+                val params = mutableListOf<String>()
+                if (followSession.isNotBlank()) params.add("session=${URLEncoder.encode(followSession, "UTF-8")}")
+                if (pinnedPane.isNotBlank()) params.add("pane=${URLEncoder.encode(pinnedPane, "UTF-8")}")
+                val query = if (params.isEmpty()) "" else "?${params.joinToString("&")}"
                 var lastError = "offline"
                 for (baseUrl in endpointUrls(current)) {
                     try {
@@ -716,7 +731,16 @@ class MainActivity : ComponentActivity() {
 
     private fun renderFrame(frame: JSONObject) {
         if (frame.optBoolean("ok")) {
-            val label = if (pinnedPane.isBlank()) "active" else "pin ${frame.optString("paneId")}"
+            val frameSession = frame.optString("session")
+            currentSession = frameSession
+            // A pin that no longer resolves drops back to following its session.
+            if (pinnedPane.isNotBlank() && !frame.optBoolean("pinValid", true)) {
+                pinnedPane = ""
+                followSession = frameSession
+                prefs().edit().putString("pinnedPane", "").putString("followSession", frameSession).apply()
+            }
+            val where = "${frame.optString("windowName")}:${frame.optInt("paneIndex")}"
+            val label = if (pinnedPane.isBlank()) "$frameSession $where" else "pin $frameSession $where"
             handler.post {
                 paneButton.text = label
                 setStatus("live")
@@ -776,7 +800,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sendViewState(socket: WebSocket? = ws) {
-        socket?.send(JSONObject().put("type", "view").put("pane", pinnedPane).toString())
+        // session is sent even with a pin so a vanished pin falls back to its session.
+        socket?.send(JSONObject().put("type", "view").put("pane", pinnedPane).put("session", followSession).toString())
     }
 
     private fun markWsDown() {
@@ -809,6 +834,7 @@ class MainActivity : ComponentActivity() {
         val current = profile ?: return
         if (pinnedPane.isBlank()) {
             payload.put("target", "active")
+            payload.put("session", followSession)
         } else {
             payload.put("target", "pane")
             payload.put("paneId", pinnedPane)
@@ -849,6 +875,41 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Group the /api/tmux/panes payload into session headers + pane rows,
+    // preserving the server's session order.
+    private fun buildPickerRows(payload: JSONObject): List<PickerRow> {
+        val arr: JSONArray = payload.optJSONArray("panes") ?: JSONArray()
+        val order = mutableListOf<String>()
+        val bySession = linkedMapOf<String, MutableList<Pane>>()
+        val sessionsArr = payload.optJSONArray("sessions")
+        if (sessionsArr != null) {
+            for (i in 0 until sessionsArr.length()) {
+                val s = sessionsArr.optString(i)
+                if (s.isNotBlank() && s !in order) { order.add(s); bySession[s] = mutableListOf() }
+            }
+        }
+        for (i in 0 until arr.length()) {
+            val item = arr.getJSONObject(i)
+            val session = item.optString("session")
+            val id = item.getString("paneId")
+            val title = item.optString("paneTitle")
+            val windowName = item.optString("windowName")
+            val titlePart = if (title.isNotBlank() && title != windowName) " - $title" else ""
+            val label = "${if (item.optBoolean("active")) "* " else ""}${item.optInt("windowIndex")}:$windowName.${item.optInt("paneIndex")}$titlePart (${item.optInt("width")}x${item.optInt("height")})"
+            if (session !in bySession) { order.add(session); bySession[session] = mutableListOf() }
+            bySession[session]!!.add(Pane(session, id, label, pinnedPane == id))
+        }
+        val rows = mutableListOf<PickerRow>()
+        for (session in order) {
+            // Highlight the followed session, or the one currently shown if none chosen.
+            val following = pinnedPane.isBlank() &&
+                (if (followSession.isNotBlank()) followSession == session else currentSession == session)
+            rows.add(PickerRow.SessionHeader(session, following))
+            bySession[session]?.forEach { rows.add(PickerRow.PaneRow(it)) }
+        }
+        return rows
+    }
+
     private fun showPanePicker() {
         val current = profile ?: return
         thread {
@@ -865,18 +926,7 @@ class MainActivity : ComponentActivity() {
                         }
                         val payload = JSONObject(connection.inputStream.bufferedReader().readText())
                         rememberEndpoint(baseUrl)
-                        val panes = mutableListOf(Pane("", "Follow active pane", pinnedPane.isBlank()))
-                        val arr: JSONArray = payload.optJSONArray("panes") ?: JSONArray()
-                        for (i in 0 until arr.length()) {
-                            val item = arr.getJSONObject(i)
-                            val id = item.getString("paneId")
-                            panes.add(Pane(
-                                id,
-                                "${if (item.optBoolean("active")) "* " else ""}${item.optInt("windowIndex")}:${item.optString("windowName")}.${item.optInt("paneIndex")} (${item.optInt("width")}x${item.optInt("height")})",
-                                pinnedPane == id
-                            ))
-                        }
-                        handler.post { showPaneDialog(panes) }
+                        handler.post { showPaneDialog(buildPickerRows(payload)) }
                         loaded = true
                         break
                     } catch (error: Exception) {
@@ -890,13 +940,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun showPaneDialog(panes: List<Pane>) {
+    private fun showPaneDialog(rows: List<PickerRow>) {
         lateinit var dialog: AlertDialog
         val list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(9), dp(10), dp(10))
             addView(TextView(this@MainActivity).apply {
-                text = "panes"
+                text = "sessions"
                 typeface = monoTypeface
                 setTextColor(Chrome.accent)
                 textSize = 11f
@@ -904,16 +954,29 @@ class MainActivity : ComponentActivity() {
                 letterSpacing = 0.04f
                 setPadding(dp(2), 0, dp(2), dp(8))
             })
-            panes.forEachIndexed { index, pane ->
-                val kind = if (pane.active) ButtonKind.PaneActive else ButtonKind.PaneInactive
-                addView(chromeButton(pane.label, kind) {
-                    dialog.dismiss()
-                    selectPane(pane)
-                }.apply {
-                    gravity = Gravity.CENTER_VERTICAL or Gravity.START
-                    setPadding(dp(12), 0, dp(12), 0)
-                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(40)).apply {
-                    if (index < panes.lastIndex) bottomMargin = dp(7)
+            rows.forEachIndexed { index, row ->
+                val button = when (row) {
+                    is PickerRow.SessionHeader -> {
+                        val kind = if (row.following) ButtonKind.PaneActive else ButtonKind.PaneInactive
+                        chromeButton(row.session, kind) {
+                            dialog.dismiss()
+                            selectFollow(row.session)
+                        }
+                    }
+                    is PickerRow.PaneRow -> {
+                        val kind = if (row.pane.active) ButtonKind.PaneActive else ButtonKind.PaneInactive
+                        chromeButton(row.pane.label, kind) {
+                            dialog.dismiss()
+                            selectPane(row.pane)
+                        }
+                    }
+                }
+                val indent = if (row is PickerRow.PaneRow) dp(16) else 0
+                button.gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                button.setPadding(dp(12), 0, dp(12), 0)
+                addView(button, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(40)).apply {
+                    leftMargin = indent
+                    if (index < rows.lastIndex) bottomMargin = dp(7)
                 })
             }
         }
@@ -932,12 +995,22 @@ class MainActivity : ComponentActivity() {
         dialog.show()
     }
 
-    private fun selectPane(pane: Pane) {
-        pinnedPane = pane.paneId
-        prefs().edit().putString("pinnedPane", pinnedPane).apply()
+    private fun selectFollow(session: String) {
+        pinnedPane = ""
+        followSession = session
+        prefs().edit().putString("pinnedPane", "").putString("followSession", session).apply()
         etag = null
         sendViewState()
-        paneButton.text = if (pinnedPane.isBlank()) "active" else pane.label
+        paneButton.text = session
+    }
+
+    private fun selectPane(pane: Pane) {
+        pinnedPane = pane.paneId
+        followSession = pane.session
+        prefs().edit().putString("pinnedPane", pinnedPane).putString("followSession", pane.session).apply()
+        etag = null
+        sendViewState()
+        paneButton.text = "pin ${pane.label}"
     }
 
     private fun showPairDialog() {

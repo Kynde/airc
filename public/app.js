@@ -51,6 +51,8 @@
   let misses = 0;
   let paused = false;
   let pinned = localStorage.getItem("airc_pin") || "";
+  let followSession = localStorage.getItem("airc_session") || "";
+  let currentSession = "";
   let fontMode = localStorage.getItem("airc_font_mode") || "auto";
   let fontSize = Number(localStorage.getItem("airc_font_size")) || 13;
   let controlsVisible = localStorage.getItem("airc_controls_visible") === "1";
@@ -158,7 +160,7 @@
   }
 
   function viewedTarget() {
-    return pinned ? { target: "pane", paneId: pinned } : { target: "active" };
+    return pinned ? { target: "pane", paneId: pinned } : { target: "active", session: followSession };
   }
 
   async function sendControl(payload) {
@@ -234,6 +236,10 @@
 
   function frameQuery() {
     const query = new URLSearchParams();
+    // session is sent in both cases so a vanished pin falls back to its session.
+    if (followSession) {
+      query.set("session", followSession);
+    }
     if (pinned) {
       query.set("pane", pinned);
     } else if (cfg.resizeToViewport) {
@@ -257,12 +263,19 @@
     if (pinned && frame.pinValid === false) {
       pinned = "";
       localStorage.removeItem("airc_pin");
+      // Keep following the session the dropped pane belonged to.
+      followSession = frame.session || "";
+      localStorage.setItem("airc_session", followSession);
       sendViewState();
     }
     el.term.innerHTML = frame.html;
     lastCursor = frame.cursor;
     lastChangeAt = Date.now();
-    el.paneLabel.textContent = `${frame.pinned ? "pin " : ""}${frame.windowName}:${frame.paneIndex}`;
+    currentSession = frame.session || "";
+    const where = `${frame.windowName}:${frame.paneIndex}`;
+    el.paneLabel.textContent = frame.pinned
+      ? `pin ${frame.session} ${where}`
+      : `${frame.session} ${where}`;
     if (frame.cols !== lastCols || frame.rows !== lastRows) {
       lastCols = frame.cols;
       lastRows = frame.rows;
@@ -290,6 +303,8 @@
     ws.send(JSON.stringify({
       type: "view",
       pane: pinned,
+      // Sent even with a pin so a vanished pin falls back to its own session.
+      session: followSession,
       cols: cells.cols,
       rows: cells.rows,
     }));
@@ -404,34 +419,65 @@
     el.state.textContent = changeAge > 10000 ? `idle ${Math.round(changeAge / 1000)}s` : "live";
   }, 500);
 
+  function selectFollow(session) {
+    pinned = "";
+    localStorage.removeItem("airc_pin");
+    followSession = session;
+    localStorage.setItem("airc_session", session);
+    etag = null;
+    sendViewState();
+    el.picker.hidden = true;
+  }
+
+  function selectPane(pane) {
+    pinned = pane.paneId;
+    localStorage.setItem("airc_pin", pinned);
+    followSession = pane.session || "";
+    localStorage.setItem("airc_session", followSession);
+    etag = null;
+    sendViewState();
+    el.picker.hidden = true;
+  }
+
   async function openPicker() {
     const response = await fetch("/api/tmux/panes", { cache: "no-store", headers: headers() });
     const payload = await response.json();
     el.pickerList.replaceChildren();
-    const follow = document.createElement("button");
-    follow.textContent = "Follow active pane";
-    follow.classList.toggle("selected", pinned === "");
-    follow.addEventListener("click", () => {
-      pinned = "";
-      localStorage.removeItem("airc_pin");
-      etag = null;
-      sendViewState();
-      el.picker.hidden = true;
-    });
-    el.pickerList.appendChild(follow);
+
+    // Group panes by session, preserving the server's session order.
+    const sessions = (payload.sessions || []).slice();
+    const bySession = new Map();
     for (const pane of payload.panes || []) {
-      const button = document.createElement("button");
-      const title = pane.paneTitle && pane.paneTitle !== pane.windowName ? ` - ${pane.paneTitle}` : "";
-      button.textContent = `${pane.active ? "* " : ""}${pane.windowIndex}:${pane.windowName}.${pane.paneIndex}${title} (${pane.width}x${pane.height})`;
-      button.classList.toggle("selected", pinned === pane.paneId);
-      button.addEventListener("click", () => {
-        pinned = pane.paneId;
-        localStorage.setItem("airc_pin", pinned);
-        etag = null;
-        sendViewState();
-        el.picker.hidden = true;
-      });
-      el.pickerList.appendChild(button);
+      if (!bySession.has(pane.session)) {
+        bySession.set(pane.session, []);
+        if (!sessions.includes(pane.session)) {
+          sessions.push(pane.session);
+        }
+      }
+      bySession.get(pane.session).push(pane);
+    }
+
+    for (const session of sessions) {
+      const header = document.createElement("button");
+      header.className = "picker-session";
+      header.textContent = session;
+      // The session header follows that session's active pane. Highlight the
+      // explicitly-followed session, or the one currently shown if none chosen.
+      const followingThis = pinned === "" &&
+        (followSession ? followSession === session : currentSession === session);
+      header.classList.toggle("selected", followingThis);
+      header.addEventListener("click", () => selectFollow(session));
+      el.pickerList.appendChild(header);
+
+      for (const pane of bySession.get(session) || []) {
+        const button = document.createElement("button");
+        button.className = "picker-pane";
+        const title = pane.paneTitle && pane.paneTitle !== pane.windowName ? ` - ${pane.paneTitle}` : "";
+        button.textContent = `${pane.active ? "* " : ""}${pane.windowIndex}:${pane.windowName}.${pane.paneIndex}${title} (${pane.width}x${pane.height})`;
+        button.classList.toggle("selected", pinned === pane.paneId);
+        button.addEventListener("click", () => selectPane(pane));
+        el.pickerList.appendChild(button);
+      }
     }
     el.picker.hidden = false;
   }

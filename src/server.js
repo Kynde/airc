@@ -217,6 +217,29 @@ function readWebsocketMessages(state, chunk) {
   return messages;
 }
 
+// Resolve the active pane to follow. Prefer the requested session, then fall
+// back to each configured session in order (sessions[0] first) so losing one
+// session switches to a surviving one rather than blanking the view. Returns
+// null only when no configured session is alive.
+async function resolveActivePane(config, requestedSession = "") {
+  const candidates = [];
+  if (requestedSession) {
+    candidates.push(requestedSession);
+  }
+  for (const session of config.sessions) {
+    if (!candidates.includes(session)) {
+      candidates.push(session);
+    }
+  }
+  for (const session of candidates) {
+    const meta = await tmux.activePane(session);
+    if (meta) {
+      return meta;
+    }
+  }
+  return null;
+}
+
 async function resolveInputTarget(config, payload) {
   if (payload.target === "pane") {
     if (typeof payload.paneId !== "string" || !/^%\d+$/.test(payload.paneId)) {
@@ -229,9 +252,10 @@ async function resolveInputTarget(config, payload) {
     return { ok: true, target: payload.paneId };
   }
   if (payload.target === undefined || payload.target === "active") {
-    const meta = await tmux.activePane(config.session);
+    const requestedSession = typeof payload.session === "string" ? payload.session : "";
+    const meta = await resolveActivePane(config, requestedSession);
     if (!meta) {
-      return { ok: false, error: `tmux session not found: ${config.session}` };
+      return { ok: false, error: "no tmux session available" };
     }
     return { ok: true, target: meta.paneId };
   }
@@ -247,7 +271,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
   };
   const resizeState = { lastCols: 0, lastRows: 0, lastAt: 0 };
 
-  async function captureFrame({ requestedPane = "", cols = NaN, rows = NaN, viewerAddress = "" }) {
+  async function captureFrame({ requestedPane = "", requestedSession = "", cols = NaN, rows = NaN, viewerAddress = "" }) {
     let pinValid = true;
     let meta = null;
 
@@ -260,13 +284,14 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       }
     }
     if (!meta) {
-      meta = await tmux.activePane(config.session);
+      // A vanished pin falls back to its own session's active pane first.
+      meta = await resolveActivePane(config, requestedSession);
     }
     if (!meta) {
       return {
         payload: {
           ok: false,
-          error: `tmux session not found: ${config.session}`,
+          error: "no tmux session available",
           serverTime: new Date().toISOString(),
         },
         etag: "",
@@ -306,13 +331,14 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     }
 
     const etag = `"${crypto.createHash("sha1")
-      .update(`${meta.paneId}|${meta.width}x${meta.height}|${meta.cursorX},${meta.cursorY}|${pinValid}|`)
+      .update(`${meta.session}|${meta.paneId}|${meta.width}x${meta.height}|${meta.cursorX},${meta.cursorY}|${pinValid}|`)
       .update(capture.text)
       .digest("hex")}"`;
     return {
       etag,
       payload: {
         ok: true,
+        session: meta.session,
         paneId: meta.paneId,
         windowIndex: meta.windowIndex,
         windowName: meta.windowName,
@@ -332,6 +358,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
   async function handleFrame(request, response, url) {
     const frame = await captureFrame({
       requestedPane: url.searchParams.get("pane") || "",
+      requestedSession: url.searchParams.get("session") || "",
       cols: Number(url.searchParams.get("cols")),
       rows: Number(url.searchParams.get("rows")),
       viewerAddress: clientAddress(request),
@@ -386,13 +413,18 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
         stats.viewers.delete(address);
       }
     }
-    const tmuxOk = await tmux.sessionExists(config.session);
+    const liveSessions = (await Promise.all(
+      config.sessions.map(async (session) => (await tmux.sessionExists(session) ? session : null)),
+    )).filter(Boolean);
+    const tmuxOk = liveSessions.length > 0;
     const ngrok = config.ngrok.enabled
       ? ngrokStatus()
       : { running: false, url: "", uptimeMs: 0, restarts: 0, lastError: "disabled" };
     sendJson(response, 200, {
       ok: tmuxOk && (!config.ngrok.enabled || (ngrok.running && ngrok.url !== "")),
       session: config.session,
+      sessions: config.sessions,
+      liveSessions,
       tmuxOk,
       lastCaptureAgeMs: stats.lastCaptureAt === 0 ? null : now - stats.lastCaptureAt,
       lastInputAgeMs: stats.lastInputAt === 0 ? null : now - stats.lastInputAt,
@@ -469,6 +501,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       sendJson(response, 200, {
         productName: config.productName,
         session: config.session,
+        sessions: config.sessions,
         pollMs: config.pollMs,
         pollIdleMaxMs: config.pollIdleMaxMs,
         fontSizeDefault: config.fontSizeDefault,
@@ -498,8 +531,8 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       return;
     }
     if (url.pathname === "/api/tmux/panes" && request.method === "GET") {
-      tmux.listPanes(config.session).then((panes) => {
-        sendJson(response, 200, panes === null ? { ok: false, panes: [] } : { ok: true, panes });
+      tmux.listPanesForSessions(config.sessions).then((panes) => {
+        sendJson(response, 200, { ok: panes.length > 0, sessions: config.sessions, panes });
       });
       return;
     }
@@ -561,6 +594,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     const wsState = {
       buffer: Buffer.alloc(0),
       pane: "",
+      session: "",
       cols: NaN,
       rows: NaN,
       etag: "",
@@ -582,6 +616,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       try {
         const frame = await captureFrame({
           requestedPane: wsState.pane,
+          requestedSession: wsState.session,
           cols: wsState.cols,
           rows: wsState.rows,
           viewerAddress: clientAddress(request),
@@ -623,6 +658,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
           const payload = JSON.parse(message.text);
           if (payload.type === "view") {
             wsState.pane = typeof payload.pane === "string" && /^%\d+$/.test(payload.pane) ? payload.pane : "";
+            wsState.session = typeof payload.session === "string" ? payload.session : "";
             wsState.cols = Number(payload.cols);
             wsState.rows = Number(payload.rows);
             wsState.etag = "";
@@ -659,10 +695,10 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
 function printHelp() {
   console.log(`Usage: node src/server.js [options]
 
-Mirror and control a tmux session from Android.
+Mirror and control tmux sessions from Android.
 
 Options:
-  --session NAME   tmux session to follow (default from config.json)
+  --session NAME   tmux session to follow; repeat for multiple (default from config.json)
   --host HOST      address to bind (use 0.0.0.0 for same-WLAN phones)
   --port PORT      port to listen on
   --config PATH    config file (default <repo>/config.json)
@@ -701,7 +737,7 @@ function main() {
   const server = makeServer(config, ngrokStatus, () => publicUrl);
 
   server.listen(config.port, config.host, () => {
-    log(`airc tmux remote listening on http://${config.host}:${config.port} (session: ${config.session})`);
+    log(`airc tmux remote listening on http://${config.host}:${config.port} (sessions: ${config.sessions.join(", ")})`);
     if (config.ngrok.enabled) {
       ngrok = startNgrok({ ...config.ngrok, port: config.port }, log, (url) => {
         publicUrl = url;

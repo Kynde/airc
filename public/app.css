@@ -215,3 +215,16 @@ body {
   border-color: var(--accent);
   color: var(--accent);
 }
+#picker-list button.picker-session {
+  font-weight: 600;
+  min-height: 40px;
+  background: var(--chrome);
+  margin-top: 6px;
+}
+#picker-list button.picker-session:first-child {
+  margin-top: 0;
+}
+#picker-list button.picker-pane {
+  margin-left: 16px;
+  width: calc(100% - 16px);
+}

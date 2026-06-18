@@ -38,7 +38,7 @@ function parseArgs(argv) {
       args.port = Number(argv[index + 1]);
       index += 1;
     } else if (item === "--session" || item === "--tmux-target") {
-      args.session = argv[index + 1];
+      (args.sessions ||= []).push(argv[index + 1]);
       index += 1;
     } else if (item === "--config") {
       args.configPath = argv[index + 1];
@@ -62,6 +62,21 @@ function generateToken() {
   return crypto.randomBytes(24).toString("base64url");
 }
 
+// Accept a string, an array, or a mix and produce a de-duplicated, non-empty
+// list of session names. Order is preserved; the first entry is the primary.
+function normalizeSessions(...sources) {
+  const out = [];
+  for (const source of sources) {
+    const items = Array.isArray(source) ? source : [source];
+    for (const item of items) {
+      if (typeof item === "string" && item.trim() && !out.includes(item)) {
+        out.push(item);
+      }
+    }
+  }
+  return out;
+}
+
 function loadConfig(argv) {
   const args = parseArgs(argv);
   const configPath = args.configPath || DEFAULT_CONFIG_PATH;
@@ -77,8 +92,18 @@ function loadConfig(argv) {
   };
   if (args.host !== undefined) config.host = args.host;
   if (args.port !== undefined) config.port = args.port;
-  if (args.session !== undefined) config.session = args.session;
   if (args.noNgrok) config.ngrok = { ...config.ngrok, enabled: false };
+
+  // sessions[] is canonical, resolved by precedence (not merged): CLI --session
+  // (repeatable) wins, else a file `sessions` array, else a legacy file `session`
+  // string, else the built-in default. config.session is kept as the primary
+  // session so singular readers still work.
+  config.sessions =
+    normalizeSessions(args.sessions).length ? normalizeSessions(args.sessions)
+      : normalizeSessions(fileConfig.sessions).length ? normalizeSessions(fileConfig.sessions)
+        : normalizeSessions(fileConfig.session).length ? normalizeSessions(fileConfig.session)
+          : normalizeSessions(DEFAULTS.session);
+  config.session = config.sessions[0];
 
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) {
     throw new Error("port must be an integer between 1 and 65535");
@@ -142,13 +167,15 @@ function bookmarkUrl(config, level = "view", actualBaseUrl = "") {
 function pairingPayload(config, actualBaseUrl = "") {
   const lanUrls = localLanAddresses(config.port);
   const preferredBaseUrl = actualBaseUrl || (config.ngrok.enabled ? baseUrl(config) : (lanUrls[0] || baseUrl(config)));
+  const sessions = config.sessions || [config.session];
   return {
     type: "airc-tmux-remote",
     version: 2,
-    name: `${os.hostname()} ${config.session}`,
+    name: `${os.hostname()} ${sessions.join(", ")}`,
     baseUrl: preferredBaseUrl,
     token: config.controlToken,
     session: config.session,
+    sessions,
     lanUrls,
     publicUrl: publicBaseUrl(config, actualBaseUrl),
   };

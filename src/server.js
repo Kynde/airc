@@ -600,6 +600,10 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       etag: "",
       closed: false,
       sending: false,
+      // Hold off on capturing until the client's first `view` message tells us
+      // which pane to show. Otherwise a pinned viewer briefly sees the active
+      // pane on every (re)connect before the pin arrives.
+      viewReady: false,
     };
 
     function send(payload) {
@@ -609,7 +613,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     }
 
     async function sendFrame(force = false) {
-      if (wsState.closed || wsState.sending) {
+      if (wsState.closed || wsState.sending || !wsState.viewReady) {
         return;
       }
       wsState.sending = true;
@@ -636,7 +640,8 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
 
     const timer = setInterval(() => sendFrame(false), config.pollMs);
     send({ type: "hello", canControl: auth.level === "control" });
-    sendFrame(true);
+    // First frame is deferred until the client sends its `view` state, so we
+    // never flash the active pane before a pin is known.
 
     socket.on("data", (chunk) => {
       let messages;
@@ -662,6 +667,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
             wsState.cols = Number(payload.cols);
             wsState.rows = Number(payload.rows);
             wsState.etag = "";
+            wsState.viewReady = true;
             sendFrame(true);
           }
         } catch {

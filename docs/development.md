@@ -126,6 +126,19 @@ HTTP polling if the socket is unavailable or closes.
 
 ## Build And Test
 
+The repo-root `Makefile` wraps the common flow (`make help` lists targets).
+It models the APK as a file target whose prerequisites are the Kotlin / res /
+manifest / gradle sources, so `make push` only rebuilds when something changed:
+
+```sh
+make check    # npm run check
+make build    # cd android-app && ./gradlew assembleDebug
+make push     # rebuild if needed, then adb install -r
+make deploy   # push and launch on the device
+```
+
+Equivalent raw commands:
+
 Node/server check:
 
 ```sh

@@ -35,7 +35,16 @@ Important behavior:
 
 ## Build And Test
 
-Use:
+Use the repo-root `Makefile` (`make help` lists targets); `make push`/`deploy`
+rebuild only when sources changed:
+
+```sh
+make check                  # npm run check
+make build                  # cd android-app && ./gradlew assembleDebug
+make push                   # rebuild if needed, then adb install -r
+```
+
+Or the raw equivalents:
 
 ```sh
 npm run check

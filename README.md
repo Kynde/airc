@@ -87,8 +87,17 @@ available screen.
 
 ## Build And Install
 
-Android SDK root on this machine is `~/android`. Build from
-`android-app/`:
+Android SDK root on this machine is `~/android`. The repo-root `Makefile`
+wraps the common flow and only rebuilds when sources changed:
+
+```sh
+make build    # assemble the debug APK
+make push     # rebuild if needed, then adb install -r
+make deploy   # push and launch on the device
+make help     # list all targets
+```
+
+Equivalent raw commands, building from `android-app/`:
 
 ```sh
 cd android-app

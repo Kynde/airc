@@ -32,6 +32,15 @@ tools/airc pair-app
 `tools/airc local` prepends `--host 0.0.0.0 --no-ngrok`. Use `tools/airc on`
 when the configured ngrok tunnel should be started by the server.
 
+To serve **both** LAN and ngrok at once (so a phone uses a direct LAN connection
+at home and the tunnel away), the server must bind a non-loopback address while
+ngrok stays enabled. `host` defaults to `127.0.0.1`, which only ngrok can reach
+(it dials `localhost` on the laptop) — the LAN interface is left unbound, so
+same-WLAN phones get connection-refused. Set `"host": "0.0.0.0"` in
+`config.json` (or pass `--host 0.0.0.0` to `tools/airc on`) so the LAN interface
+is bound too. Verify the bind with `ss -tlnp | grep 8080`: it should show
+`0.0.0.0:8080`, not `127.0.0.1:8080`.
+
 Common commands:
 
 ```sh
@@ -92,7 +101,11 @@ only know LAN URLs because local mode disables ngrok.
   first and falls back to the public URL.
 - The app remembers the last successful endpoint. When it is using a public URL,
   it periodically tries LAN again, so returning to the same network switches
-  back automatically.
+  back automatically — including while a websocket is actively streaming, by
+  probing the LAN addresses on a background thread and dropping the tunnel once
+  one answers. This only works if the laptop is actually reachable on the LAN
+  (server bound to `0.0.0.0`, both devices on a network that doesn't isolate
+  clients); otherwise the public URL keeps carrying the connection.
 - While connected over the public URL, the app also periodically pulls the
   laptop's current LAN addresses from `/api/config` and merges them into its
   stored list. So if the laptop later joins a different network (a new IP the
@@ -137,8 +150,16 @@ If scrolling appears, reduce tmux rows/columns or use `A-`.
   ngrok can block Airc's supervised child.
 - QR scan is blurry: move the phone farther away until the QR is sharp, or use
   manual pairing with the printed `baseUrl` and `token`.
-- App cannot connect on WLAN: confirm the laptop server was started with
-  `tools/airc local`, and confirm the phone is on the same network.
+- App cannot connect on WLAN: confirm the server is bound to a non-loopback
+  address (`ss -tlnp | grep 8080` should show `0.0.0.0:8080`; set
+  `"host": "0.0.0.0"` if it shows `127.0.0.1`), and that the phone is on the same
+  network.
+- App stays on ngrok at home and never switches to LAN: watch the app's
+  decisions with `adb logcat -s airc:I`. A `prefer-lan probe ... -> HTTP 200`
+  followed by `endpoint switched:` means it flipped to LAN; a `ConnectException`
+  means the server is loopback-bound or a firewall blocks the port, and a
+  `SocketTimeoutException` means that address is on an unreachable subnet (e.g. a
+  VPN/`tun0` IP the laptop also advertises, which is harmless noise).
 - Tesla cannot connect to a LAN URL: use ngrok/public browser pairing. Tesla
   hotspot-local/private address access failed in earlier tests.
 - ADB install fails with `unauthorized`: accept the USB debugging prompt on the

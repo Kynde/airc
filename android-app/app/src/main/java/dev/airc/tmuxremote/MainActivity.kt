@@ -17,6 +17,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.TextUtils
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -99,11 +100,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
+        const val TAG = "airc"
         const val FONT_MIN = 7f
         const val FONT_MAX = 24f
         // How often, while connected over the tunnel, to re-fetch the laptop's live LAN
         // addresses so a since-changed IP (e.g. a different router) becomes reachable.
         const val CONFIG_REFRESH_MS = 30000L
+        // How often, while streaming over the tunnel, to probe whether the paired LAN
+        // addresses are reachable again (i.e. we're back on the home network).
+        const val LAN_PREFER_MS = 15000L
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -129,6 +134,7 @@ class MainActivity : ComponentActivity() {
     private var lastGoodUrl: String = ""
     private var lastLanProbeAt: Long = 0
     private var lastConfigRefreshAt: Long = 0
+    private var lastLanPreferAt: Long = 0
     private var statusPulse: ObjectAnimator? = null
     private var statusDetail: String = "connecting"
     private var followWebViewLeft = true
@@ -783,6 +789,9 @@ class MainActivity : ComponentActivity() {
         if (!polling) return
         maybeRefreshLanUrls()
         if (wsConnected) {
+            // While the websocket streams over the tunnel, HTTP polling (and its LAN re-probe)
+            // is suspended, so check separately whether we're back on the home network.
+            maybePreferLan()
             // The websocket streams frames; keep a slow watchdog so HTTP polling resumes if it drops.
             handler.postDelayed({ pollOnce() }, 1000)
             return
@@ -879,6 +888,7 @@ class MainActivity : ComponentActivity() {
         // snapshot (and don't bother dropping the tunnel) over a transient interface blip.
         val lanUrls = if (freshLan.isNotEmpty()) freshLan else current.lanUrls
         val lanChanged = lanUrls != current.lanUrls
+        if (lanChanged) Log.i(TAG, "config refresh: lanUrls ${current.lanUrls} -> $lanUrls")
         if (!lanChanged && publicUrl == current.publicUrl) return
         profile = current.copy(lanUrls = lanUrls, publicUrl = publicUrl)
         prefs().edit()
@@ -891,6 +901,51 @@ class MainActivity : ComponentActivity() {
             // resumes, tries LAN first, and reconnects over whichever endpoint answers.
             lastLanProbeAt = 0
             if (wsConnected || wsConnecting) closeWebSocket()
+        }
+    }
+
+    // A live websocket keeps the HTTP poll loop (and its LAN re-probe in endpointUrls) parked,
+    // so a tunnel connection would never notice the LAN coming back on its own. While streaming
+    // over the tunnel, probe the paired LAN addresses directly from the phone; the first that
+    // answers means we're home, so drop the tunnel and force the next poll to prefer LAN.
+    private fun maybePreferLan() {
+        val current = profile ?: return
+        // Throttle the whole check (incl. its diagnostics) to one heartbeat per interval.
+        val now = System.currentTimeMillis()
+        if (now - lastLanPreferAt < LAN_PREFER_MS) return
+        lastLanPreferAt = now
+        val lan = current.lanUrls.map { it.trim().trimEnd('/') }.filter { it.isNotBlank() }
+        Log.i(TAG, "prefer-lan: route=$lastGoodUrl local=${isLocalEndpoint(lastGoodUrl)} ws=$wsConnected lan=$lan")
+        // Only relevant while a websocket is up and the active route is the tunnel.
+        if (!wsConnected || lastGoodUrl.isBlank() || isLocalEndpoint(lastGoodUrl)) return
+        if (lan.isEmpty()) return
+        thread {
+            for (baseUrl in lan) {
+                try {
+                    val connection = (URL("$baseUrl/api/config").openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        setRequestProperty("X-Airc-Auth", current.token)
+                        connectTimeout = 1500
+                        readTimeout = 2500
+                    }
+                    val code = connection.responseCode
+                    connection.disconnect()
+                    Log.i(TAG, "prefer-lan probe $baseUrl -> HTTP $code")
+                    if (code in 200..299) {
+                        Log.i(TAG, "prefer-lan: $baseUrl reachable, dropping tunnel")
+                        handler.post {
+                            // Make the resumed poll try LAN first, then drop the tunnel so it resumes.
+                            lastLanProbeAt = 0
+                            closeWebSocket()
+                        }
+                        return@thread
+                    }
+                } catch (error: Exception) {
+                    // Not reachable on this address; try the next.
+                    Log.i(TAG, "prefer-lan probe $baseUrl -> ${error.javaClass.simpleName}: ${error.message}")
+                }
+            }
+            Log.i(TAG, "prefer-lan: no LAN address reachable, staying on tunnel")
         }
     }
 
@@ -1181,30 +1236,62 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showPairDialog() {
-        val root = LinearLayout(this).apply {
+        // Mirror the input row's field styling so the dialog matches the chrome.
+        fun field(hintText: String, value: String, uri: Boolean): EditText =
+            EditText(this).apply {
+                hint = hintText
+                setText(value)
+                setSingleLine(true)
+                typeface = monoTypeface
+                setTextColor(Chrome.muted)
+                setHintTextColor(Chrome.primaryDim)
+                textSize = 13f
+                minHeight = dp(42)
+                includeFontPadding = false
+                background = roundedStroke(Chrome.bg, Chrome.borderAlpha, Chrome.radiusDp)
+                setPadding(dp(10), 0, dp(10), 0)
+                if (uri) inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
+            }
+        val url = field("Base URL", profile?.baseUrl ?: "", true)
+        val token = field("Token", profile?.token ?: "", false)
+        val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), 0, dp(16), 0)
+            setPadding(dp(18), dp(16), dp(18), dp(6))
+            addView(TextView(this@MainActivity).apply {
+                text = "Pair laptop"
+                typeface = monoTypeface
+                setTextColor(Chrome.primary)
+                textSize = 18f
+                includeFontPadding = false
+            })
+            addView(url, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(42)).apply {
+                topMargin = dp(16)
+            })
+            addView(token, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(42)).apply {
+                topMargin = dp(8)
+            })
         }
-        val url = EditText(this).apply {
-            hint = "Base URL"
-            setText(profile?.baseUrl ?: "")
-            inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
-        }
-        val token = EditText(this).apply {
-            hint = "Token"
-            setText(profile?.token ?: "")
-        }
-        root.addView(url)
-        root.addView(token)
         AlertDialog.Builder(this)
-            .setTitle("Pair laptop")
-            .setView(root)
+            .setView(body)
             .setPositiveButton("Save") { _, _ ->
                 saveProfile(Profile("Laptop tmux", url.text.toString(), token.text.toString(), ""))
             }
             .setNegativeButton("Scan QR") { _, _ -> scanQr() }
             .setNeutralButton("Cancel", null)
-            .show()
+            .create()
+            .apply {
+                setOnShowListener {
+                    window?.setBackgroundDrawable(roundedStroke(Chrome.surface, Chrome.borderAlpha, Chrome.radiusDp))
+                    for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) {
+                        getButton(which)?.apply {
+                            typeface = monoTypeface
+                            setTextColor(Chrome.accent)
+                            textSize = 13f
+                        }
+                    }
+                }
+                show()
+            }
     }
 
     private fun scanQr() {
@@ -1266,6 +1353,7 @@ class MainActivity : ComponentActivity() {
     private fun rememberEndpoint(baseUrl: String) {
         val normalized = baseUrl.trim().trimEnd('/')
         if (normalized.isBlank() || normalized == lastGoodUrl) return
+        Log.i(TAG, "endpoint switched: $lastGoodUrl -> $normalized")
         lastGoodUrl = normalized
         prefs().edit().putString("lastGoodUrl", normalized).apply()
     }

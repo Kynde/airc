@@ -118,6 +118,8 @@ same tmux window visible on the laptop.
 
 - Whole tmux window/multi-pane rendering is not implemented.
 - Android remembers the last successful endpoint and periodically probes LAN
-  again when using public/ngrok.
+  again when using public/ngrok, including while a websocket is streaming (the
+  HTTP poll loop and its inline LAN re-probe are otherwise parked under a live
+  websocket).
 - ngrok free tier has the interstitial and one-agent limit.
 - Local private LAN access from Tesla was not reliable.

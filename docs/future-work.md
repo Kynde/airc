@@ -3,8 +3,11 @@
 ## Endpoint Fallback
 
 Android now remembers the last successful endpoint and periodically probes LAN
-again when using public/ngrok. Further improvement: probe LAN in the background
-instead of doing the periodic LAN retry inline with a foreground request.
+again when using public/ngrok. The websocket-streaming path already probes LAN
+on a background thread; the remaining inline retry is the HTTP poll loop's own
+LAN attempt. Further improvement: an event-driven `ConnectivityManager`
+.NetworkCallback to probe immediately on a network change instead of waiting for
+the next ~15s tick.
 
 ## Systemd
 

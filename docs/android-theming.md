@@ -78,7 +78,7 @@ Use these instead of hand-rolling drawables:
 
 Stock `AlertDialog`/`PopupWindow` chrome (titles, list items, Material buttons)
 does **not** match. The pattern used by `showStatusDetail()`,
-`showSettingsMenu()`, and `showPaneDialog()` is:
+`showSettingsMenu()`, `showPaneDialog()`, and `showPairDialog()` is:
 
 1. Build the content as a `LinearLayout` (header `TextView` in `accent`, then
    `chromeButton` rows or muted text).
@@ -88,9 +88,10 @@ does **not** match. The pattern used by `showStatusDetail()`,
 3. For a popup, set the panel background to `roundedStroke` and a transparent
    `PopupWindow` background.
 
-`showPairDialog()` is the one remaining stock-styled dialog (plain title + two
-`EditText`s). It was intentionally left simple; restyle it the same way if its
-look starts to matter.
+`showPairDialog()` keeps the three default `AlertDialog` buttons (Save / Scan
+QR / Cancel) and themes them in `setOnShowListener`; its two `EditText`s reuse
+the input-row field styling (`roundedStroke` background, `muted` text,
+`primaryDim` hint).
 
 ## Checklist for adding a new control
 

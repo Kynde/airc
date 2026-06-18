@@ -496,7 +496,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         val local = isLocalEndpoint(url)
-        endpointTag.text = if (local) "lan" else "ngrok"
+        endpointTag.text = if (local) "wlan" else "ngrok"
         endpointTag.setTextColor(if (local) Chrome.primaryDim else Chrome.accent)
         endpointTag.visibility = View.VISIBLE
     }

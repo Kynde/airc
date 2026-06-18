@@ -92,6 +92,13 @@ only know LAN URLs because local mode disables ngrok.
 - The app remembers the last successful endpoint. When it is using a public URL,
   it periodically tries LAN again, so returning to the same network switches
   back automatically.
+- While connected over the public URL, the app also periodically pulls the
+  laptop's current LAN addresses from `/api/config` and merges them into its
+  stored list. So if the laptop later joins a different network (a new IP the
+  pairing snapshot never had), the app discovers it and switches to a direct LAN
+  connection on its own — no re-pairing needed. This works whenever both devices
+  share a network that does not isolate clients; on guest/AP-isolated networks
+  the public URL continues to carry the connection.
 
 ## Browser Usage
 

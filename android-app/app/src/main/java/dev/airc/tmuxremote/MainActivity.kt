@@ -101,12 +101,16 @@ class MainActivity : ComponentActivity() {
     private companion object {
         const val FONT_MIN = 7f
         const val FONT_MAX = 24f
+        // How often, while connected over the tunnel, to re-fetch the laptop's live LAN
+        // addresses so a since-changed IP (e.g. a different router) becomes reachable.
+        const val CONFIG_REFRESH_MS = 30000L
     }
 
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var webView: TerminalWebView
     private lateinit var status: TextView
     private lateinit var statusDot: View
+    private lateinit var endpointTag: TextView
     private lateinit var paneButton: Button
     private lateinit var input: EditText
     private var profile: Profile? = null
@@ -124,6 +128,7 @@ class MainActivity : ComponentActivity() {
     }
     private var lastGoodUrl: String = ""
     private var lastLanProbeAt: Long = 0
+    private var lastConfigRefreshAt: Long = 0
     private var statusPulse: ObjectAnimator? = null
     private var statusDetail: String = "connecting"
     private var followWebViewLeft = true
@@ -246,10 +251,22 @@ class MainActivity : ComponentActivity() {
             setSingleLine(true)
             ellipsize = TextUtils.TruncateAt.END
         }
+        endpointTag = TextView(this).apply {
+            typeface = monoTypeface
+            textSize = 11f
+            includeFontPadding = false
+            letterSpacing = 0.06f
+            setSingleLine(true)
+            visibility = View.GONE
+            setOnClickListener { showStatusDetail() }
+        }
         statusWrap.addView(statusDot, LinearLayout.LayoutParams(dp(9), dp(9)).apply {
             rightMargin = dp(7)
         })
-        statusWrap.addView(status, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        statusWrap.addView(status, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        statusWrap.addView(endpointTag, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            leftMargin = dp(9)
+        })
         paneButton = chromeButton("active", ButtonKind.PaneActive) { showPanePicker() }
         val settingsButton = chromeButton("⚙", ButtonKind.IconAccent) { anchor -> showSettingsMenu(anchor) }
         top.addView(statusWrap, LinearLayout.LayoutParams(0, dp(34), 1f))
@@ -444,12 +461,14 @@ class MainActivity : ComponentActivity() {
                 status.setTextColor(Chrome.primary)
                 statusDot.background = dotDrawable(Chrome.primary, filled = true, glow = true)
                 statusDot.alpha = 1f
+                updateEndpointTag(connected = true)
             }
             lower == "connecting" || lower.contains("timeout") || lower.contains("failed") || lower.startsWith("http") || lower.startsWith("send") || lower.startsWith("panes") -> {
                 status.text = "reconnecting"
                 status.setTextColor(Chrome.amber)
                 statusDot.background = dotDrawable(Chrome.amber, filled = true, glow = false)
                 startStatusPulse()
+                updateEndpointTag(connected = false)
             }
             else -> {
                 stopStatusPulse()
@@ -457,8 +476,34 @@ class MainActivity : ComponentActivity() {
                 status.setTextColor(Chrome.danger)
                 statusDot.background = dotDrawable(Chrome.danger, filled = false, glow = false)
                 statusDot.alpha = 1f
+                updateEndpointTag(connected = false)
             }
         }
+    }
+
+    // The current endpoint is whichever URL last answered (lastGoodUrl). Classify it by host:
+    // loopback / private-range / *.local is the LAN; anything else is the ngrok tunnel.
+    private fun updateEndpointTag(connected: Boolean) {
+        val url = lastGoodUrl
+        if (!connected || url.isBlank()) {
+            endpointTag.visibility = View.GONE
+            return
+        }
+        val local = isLocalEndpoint(url)
+        endpointTag.text = if (local) "lan" else "ngrok"
+        endpointTag.setTextColor(if (local) Chrome.primaryDim else Chrome.accent)
+        endpointTag.visibility = View.VISIBLE
+    }
+
+    private fun isLocalEndpoint(url: String): Boolean {
+        val host = try { URL(url).host?.lowercase() } catch (_: Exception) { null } ?: return false
+        if (host == "localhost" || host == "127.0.0.1" || host == "::1" || host.endsWith(".local")) return true
+        if (host.startsWith("192.168.") || host.startsWith("10.")) return true
+        // 172.16.0.0 - 172.31.255.255
+        Regex("^172\\.(\\d{1,3})\\.").find(host)?.groupValues?.get(1)?.toIntOrNull()?.let {
+            if (it in 16..31) return true
+        }
+        return false
     }
 
     private fun showStatusDetail() {
@@ -479,6 +524,16 @@ class MainActivity : ComponentActivity() {
                 textSize = 13f
                 setPadding(0, dp(14), 0, dp(4))
             })
+            if (lastGoodUrl.isNotBlank()) {
+                addView(TextView(this@MainActivity).apply {
+                    val local = isLocalEndpoint(lastGoodUrl)
+                    text = "${if (local) "lan" else "ngrok"} · $lastGoodUrl"
+                    typeface = monoTypeface
+                    setTextColor(if (local) Chrome.primaryDim else Chrome.accent)
+                    textSize = 12f
+                    setPadding(0, dp(4), 0, dp(4))
+                })
+            }
         }
         AlertDialog.Builder(this)
             .setView(body)
@@ -726,6 +781,7 @@ class MainActivity : ComponentActivity() {
 
     private fun pollOnce() {
         if (!polling) return
+        maybeRefreshLanUrls()
         if (wsConnected) {
             // The websocket streams frames; keep a slow watchdog so HTTP polling resumes if it drops.
             handler.postDelayed({ pollOnce() }, 1000)
@@ -783,6 +839,58 @@ class MainActivity : ComponentActivity() {
                 }
                 handler.postDelayed({ pollOnce() }, 750)
             }
+        }
+    }
+
+    // The paired lanUrls are a snapshot of the laptop's IPs at pairing time, so they go stale
+    // when the laptop later joins a different network. While we're reaching it over the tunnel,
+    // periodically pull its live addresses from /api/config and merge them in; the existing LAN
+    // re-probe (endpointUrls) then discovers the laptop directly without re-pairing.
+    private fun maybeRefreshLanUrls() {
+        val current = profile ?: return
+        // Only worth doing when the active route is the tunnel; on LAN there's nothing to gain.
+        if (lastGoodUrl.isBlank() || isLocalEndpoint(lastGoodUrl)) return
+        val now = System.currentTimeMillis()
+        if (now - lastConfigRefreshAt < CONFIG_REFRESH_MS) return
+        lastConfigRefreshAt = now
+        thread {
+            try {
+                val connection = (URL("$lastGoodUrl/api/config").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    setRequestProperty("X-Airc-Auth", current.token)
+                    connectTimeout = 2500
+                    readTimeout = 6000
+                }
+                if (connection.responseCode !in 200..299) return@thread
+                val payload = JSONObject(connection.inputStream.bufferedReader().readText())
+                val freshLan = jsonArrayToList(payload.optJSONArray("lanUrls"))
+                val freshPublic = payload.optString("publicUrl").trim().trimEnd('/')
+                handler.post { applyDiscoveredEndpoints(freshLan, freshPublic) }
+            } catch (_: Exception) {
+                // Best-effort refresh; the tunnel keeps working regardless.
+            }
+        }
+    }
+
+    private fun applyDiscoveredEndpoints(freshLan: List<String>, freshPublic: String) {
+        val current = profile ?: return
+        val publicUrl = if (freshPublic.isNotBlank()) freshPublic else current.publicUrl
+        // An empty list means the laptop reported no LAN IPs right now; keep the existing
+        // snapshot (and don't bother dropping the tunnel) over a transient interface blip.
+        val lanUrls = if (freshLan.isNotEmpty()) freshLan else current.lanUrls
+        val lanChanged = lanUrls != current.lanUrls
+        if (!lanChanged && publicUrl == current.publicUrl) return
+        profile = current.copy(lanUrls = lanUrls, publicUrl = publicUrl)
+        prefs().edit()
+            .putString("lanUrls", JSONArray(lanUrls).toString())
+            .putString("publicUrl", publicUrl)
+            .apply()
+        if (lanChanged) {
+            // Let the next poll probe the refreshed LAN addresses right away. A live websocket
+            // keeps HTTP polling (and thus the LAN probe) suspended, so drop it; the poll loop
+            // resumes, tries LAN first, and reconnects over whichever endpoint answers.
+            lastLanProbeAt = 0
+            if (wsConnected || wsConnecting) closeWebSocket()
         }
     }
 

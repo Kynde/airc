@@ -876,18 +876,7 @@ class MainActivity : ComponentActivity() {
                                 pinnedPane == id
                             ))
                         }
-                        handler.post {
-                            AlertDialog.Builder(this)
-                                .setTitle("Panes")
-                                .setItems(panes.map { it.label }.toTypedArray()) { _, which ->
-                                    pinnedPane = panes[which].paneId
-                                    prefs().edit().putString("pinnedPane", pinnedPane).apply()
-                                    etag = null
-                                    sendViewState()
-                                    paneButton.text = if (pinnedPane.isBlank()) "active" else panes[which].label
-                                }
-                                .show()
-                        }
+                        handler.post { showPaneDialog(panes) }
                         loaded = true
                         break
                     } catch (error: Exception) {
@@ -899,6 +888,56 @@ class MainActivity : ComponentActivity() {
             }
             if (!loaded) postStatus(lastError)
         }
+    }
+
+    private fun showPaneDialog(panes: List<Pane>) {
+        lateinit var dialog: AlertDialog
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(9), dp(10), dp(10))
+            addView(TextView(this@MainActivity).apply {
+                text = "panes"
+                typeface = monoTypeface
+                setTextColor(Chrome.accent)
+                textSize = 11f
+                includeFontPadding = false
+                letterSpacing = 0.04f
+                setPadding(dp(2), 0, dp(2), dp(8))
+            })
+            panes.forEachIndexed { index, pane ->
+                val kind = if (pane.active) ButtonKind.PaneActive else ButtonKind.PaneInactive
+                addView(chromeButton(pane.label, kind) {
+                    dialog.dismiss()
+                    selectPane(pane)
+                }.apply {
+                    gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                    setPadding(dp(12), 0, dp(12), 0)
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(40)).apply {
+                    if (index < panes.lastIndex) bottomMargin = dp(7)
+                })
+            }
+        }
+        val scroller = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            addView(list)
+        }
+        dialog = AlertDialog.Builder(this)
+            .setView(scroller)
+            .create()
+            .apply {
+                setOnShowListener {
+                    window?.setBackgroundDrawable(roundedStroke(Chrome.surface, Chrome.borderAlpha, Chrome.radiusDp))
+                }
+            }
+        dialog.show()
+    }
+
+    private fun selectPane(pane: Pane) {
+        pinnedPane = pane.paneId
+        prefs().edit().putString("pinnedPane", pinnedPane).apply()
+        etag = null
+        sendViewState()
+        paneButton.text = if (pinnedPane.isBlank()) "active" else pane.label
     }
 
     private fun showPairDialog() {

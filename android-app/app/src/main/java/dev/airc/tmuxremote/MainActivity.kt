@@ -533,7 +533,7 @@ class MainActivity : ComponentActivity() {
             if (lastGoodUrl.isNotBlank()) {
                 addView(TextView(this@MainActivity).apply {
                     val local = isLocalEndpoint(lastGoodUrl)
-                    text = "${if (local) "lan" else "ngrok"} · $lastGoodUrl"
+                    text = "${if (local) "wlan" else "ngrok"} · $lastGoodUrl"
                     typeface = monoTypeface
                     setTextColor(if (local) Chrome.primaryDim else Chrome.accent)
                     textSize = 12f
@@ -888,7 +888,7 @@ class MainActivity : ComponentActivity() {
         // snapshot (and don't bother dropping the tunnel) over a transient interface blip.
         val lanUrls = if (freshLan.isNotEmpty()) freshLan else current.lanUrls
         val lanChanged = lanUrls != current.lanUrls
-        if (lanChanged) Log.i(TAG, "config refresh: lanUrls ${current.lanUrls} -> $lanUrls")
+        if (lanChanged && BuildConfig.DEBUG) Log.i(TAG, "config refresh: lanUrls ${current.lanUrls} -> $lanUrls")
         if (!lanChanged && publicUrl == current.publicUrl) return
         profile = current.copy(lanUrls = lanUrls, publicUrl = publicUrl)
         prefs().edit()
@@ -915,7 +915,7 @@ class MainActivity : ComponentActivity() {
         if (now - lastLanPreferAt < LAN_PREFER_MS) return
         lastLanPreferAt = now
         val lan = current.lanUrls.map { it.trim().trimEnd('/') }.filter { it.isNotBlank() }
-        Log.i(TAG, "prefer-lan: route=$lastGoodUrl local=${isLocalEndpoint(lastGoodUrl)} ws=$wsConnected lan=$lan")
+        if (BuildConfig.DEBUG) Log.i(TAG, "prefer-lan: route=$lastGoodUrl local=${isLocalEndpoint(lastGoodUrl)} ws=$wsConnected lan=$lan")
         // Only relevant while a websocket is up and the active route is the tunnel.
         if (!wsConnected || lastGoodUrl.isBlank() || isLocalEndpoint(lastGoodUrl)) return
         if (lan.isEmpty()) return
@@ -930,9 +930,9 @@ class MainActivity : ComponentActivity() {
                     }
                     val code = connection.responseCode
                     connection.disconnect()
-                    Log.i(TAG, "prefer-lan probe $baseUrl -> HTTP $code")
+                    if (BuildConfig.DEBUG) Log.i(TAG, "prefer-lan probe $baseUrl -> HTTP $code")
                     if (code in 200..299) {
-                        Log.i(TAG, "prefer-lan: $baseUrl reachable, dropping tunnel")
+                        if (BuildConfig.DEBUG) Log.i(TAG, "prefer-lan: $baseUrl reachable, dropping tunnel")
                         handler.post {
                             // Make the resumed poll try LAN first, then drop the tunnel so it resumes.
                             lastLanProbeAt = 0
@@ -942,10 +942,10 @@ class MainActivity : ComponentActivity() {
                     }
                 } catch (error: Exception) {
                     // Not reachable on this address; try the next.
-                    Log.i(TAG, "prefer-lan probe $baseUrl -> ${error.javaClass.simpleName}: ${error.message}")
+                    if (BuildConfig.DEBUG) Log.i(TAG, "prefer-lan probe $baseUrl -> ${error.javaClass.simpleName}: ${error.message}")
                 }
             }
-            Log.i(TAG, "prefer-lan: no LAN address reachable, staying on tunnel")
+            if (BuildConfig.DEBUG) Log.i(TAG, "prefer-lan: no LAN address reachable, staying on tunnel")
         }
     }
 
@@ -1353,7 +1353,7 @@ class MainActivity : ComponentActivity() {
     private fun rememberEndpoint(baseUrl: String) {
         val normalized = baseUrl.trim().trimEnd('/')
         if (normalized.isBlank() || normalized == lastGoodUrl) return
-        Log.i(TAG, "endpoint switched: $lastGoodUrl -> $normalized")
+        if (BuildConfig.DEBUG) Log.i(TAG, "endpoint switched: $lastGoodUrl -> $normalized")
         lastGoodUrl = normalized
         prefs().edit().putString("lastGoodUrl", normalized).apply()
     }

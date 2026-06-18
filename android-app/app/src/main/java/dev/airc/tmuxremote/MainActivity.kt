@@ -25,6 +25,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.ScrollView
@@ -496,6 +497,56 @@ class MainActivity : ComponentActivity() {
             }
     }
 
+    private fun showAboutDialog() {
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(18), dp(20), dp(18), dp(8))
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.airc_icon)
+            }, LinearLayout.LayoutParams(dp(88), dp(88)))
+            addView(TextView(this@MainActivity).apply {
+                text = "airc"
+                typeface = monoTypeface
+                setTextColor(Chrome.primary)
+                textSize = 22f
+                includeFontPadding = false
+                letterSpacing = 0.06f
+                setPadding(0, dp(14), 0, 0)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "tmux remote"
+                typeface = monoTypeface
+                setTextColor(Chrome.primaryDim)
+                textSize = 12f
+                includeFontPadding = false
+                setPadding(0, dp(2), 0, 0)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "build ${BuildConfig.GIT_DESCRIBE}"
+                typeface = monoTypeface
+                setTextColor(Chrome.muted)
+                textSize = 13f
+                setPadding(0, dp(16), 0, dp(4))
+            })
+        }
+        AlertDialog.Builder(this)
+            .setView(body)
+            .setPositiveButton("OK", null)
+            .create()
+            .apply {
+                setOnShowListener {
+                    window?.setBackgroundDrawable(roundedStroke(Chrome.surface, Chrome.borderAlpha, Chrome.radiusDp))
+                    getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
+                        typeface = monoTypeface
+                        setTextColor(Chrome.accent)
+                        textSize = 13f
+                    }
+                }
+                show()
+            }
+    }
+
     private fun startStatusPulse() {
         if (statusPulse?.isRunning == true) return
         statusDot.alpha = 1f
@@ -537,6 +588,12 @@ class MainActivity : ComponentActivity() {
             addView(chromeButton("pair laptop", ButtonKind.Key) {
                 popup.dismiss()
                 showPairDialog()
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(38)).apply {
+                bottomMargin = dp(7)
+            })
+            addView(chromeButton("about", ButtonKind.Key) {
+                popup.dismiss()
+                showAboutDialog()
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(38)))
         }
         popup = PopupWindow(panel, dp(178), LinearLayout.LayoutParams.WRAP_CONTENT, true).apply {

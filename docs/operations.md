@@ -83,7 +83,8 @@ only know LAN URLs because local mode disables ngrok.
 ## App Usage
 
 - The app follows the active tmux pane by default.
-- Tap `active` to pick or pin a pane.
+- Tap `active` to pick or pin a pane. The picker lists only sessions that are
+  currently live; configured sessions that aren't running are omitted.
 - Type in the bottom field, then tap `send` or use the keyboard send action.
 - Quick buttons send Up, Down, and Enter.
 - `A-` and `A+` adjust app-side font rendering only; they do not resize tmux.

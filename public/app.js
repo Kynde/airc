@@ -444,18 +444,21 @@
     const payload = await response.json();
     el.pickerList.replaceChildren();
 
-    // Group panes by session, preserving the server's session order.
-    const sessions = (payload.sessions || []).slice();
+    // Group panes by session. Only sessions with live panes are listed; a
+    // configured-but-dead session has no panes, so it's left out. The server's
+    // session order decides ordering, then any extra pane-sessions follow.
     const bySession = new Map();
     for (const pane of payload.panes || []) {
       if (!bySession.has(pane.session)) {
         bySession.set(pane.session, []);
-        if (!sessions.includes(pane.session)) {
-          sessions.push(pane.session);
-        }
       }
       bySession.get(pane.session).push(pane);
     }
+    const configured = payload.sessions || [];
+    const sessions = [
+      ...configured.filter((session) => bySession.has(session)),
+      ...[...bySession.keys()].filter((session) => !configured.includes(session)),
+    ];
 
     for (const session of sessions) {
       const header = document.createElement("button");

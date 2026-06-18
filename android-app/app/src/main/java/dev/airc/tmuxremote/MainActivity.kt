@@ -1040,19 +1040,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Group the /api/tmux/panes payload into session headers + pane rows,
-    // preserving the server's session order.
+    // Group the /api/tmux/panes payload into session headers + pane rows. Only
+    // sessions with live panes are listed; a configured-but-dead session has no
+    // panes, so it's left out. The server's session order decides ordering,
+    // then any extra pane-sessions follow.
     private fun buildPickerRows(payload: JSONObject): List<PickerRow> {
         val arr: JSONArray = payload.optJSONArray("panes") ?: JSONArray()
-        val order = mutableListOf<String>()
         val bySession = linkedMapOf<String, MutableList<Pane>>()
-        val sessionsArr = payload.optJSONArray("sessions")
-        if (sessionsArr != null) {
-            for (i in 0 until sessionsArr.length()) {
-                val s = sessionsArr.optString(i)
-                if (s.isNotBlank() && s !in order) { order.add(s); bySession[s] = mutableListOf() }
-            }
-        }
         for (i in 0 until arr.length()) {
             val item = arr.getJSONObject(i)
             val session = item.optString("session")
@@ -1061,9 +1055,17 @@ class MainActivity : ComponentActivity() {
             val windowName = item.optString("windowName")
             val titlePart = if (title.isNotBlank() && title != windowName) " - $title" else ""
             val label = "${if (item.optBoolean("active")) "* " else ""}${item.optInt("windowIndex")}:$windowName.${item.optInt("paneIndex")}$titlePart (${item.optInt("width")}x${item.optInt("height")})"
-            if (session !in bySession) { order.add(session); bySession[session] = mutableListOf() }
-            bySession[session]!!.add(Pane(session, id, label, pinnedPane == id))
+            bySession.getOrPut(session) { mutableListOf() }.add(Pane(session, id, label, pinnedPane == id))
         }
+        val order = mutableListOf<String>()
+        val sessionsArr = payload.optJSONArray("sessions")
+        if (sessionsArr != null) {
+            for (i in 0 until sessionsArr.length()) {
+                val s = sessionsArr.optString(i)
+                if (s.isNotBlank() && s in bySession && s !in order) order.add(s)
+            }
+        }
+        for (s in bySession.keys) { if (s !in order) order.add(s) }
         val rows = mutableListOf<PickerRow>()
         for (session in order) {
             // Highlight the followed session, or the one currently shown if none chosen.

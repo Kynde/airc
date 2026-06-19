@@ -139,6 +139,36 @@ body {
   font: inherit;
   padding: 0 10px;
 }
+#control-ctrl-wrap {
+  position: relative;
+  flex: none;
+}
+#control-ctrl {
+  min-width: 48px;
+  font-size: 18px;
+  line-height: 1;
+}
+#control-ctrl.active {
+  border-color: var(--accent, var(--fg));
+}
+#control-ctrl-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--chrome);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  z-index: 11;
+}
+#control-ctrl-menu[hidden] { display: none; }
+#control-ctrl-menu button {
+  min-width: 64px;
+}
 #cursor {
   position: absolute;
   background: var(--fg);

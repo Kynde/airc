@@ -26,6 +26,8 @@
     controlUp: document.getElementById("control-up"),
     controlDown: document.getElementById("control-down"),
     controlEnter: document.getElementById("control-enter"),
+    controlCtrl: document.getElementById("control-ctrl"),
+    controlCtrlMenu: document.getElementById("control-ctrl-menu"),
     picker: document.getElementById("picker"),
     pickerList: document.getElementById("picker-list"),
     pickerClose: document.getElementById("picker-close"),
@@ -156,7 +158,26 @@
     el.controlsToggle.classList.toggle("active", visible);
     el.controlsToggle.textContent = visible ? "ctrl on" : "ctrl";
     el.controlBar.hidden = !visible;
+    if (!visible) {
+      closeCtrlMenu();
+    }
     applyFont();
+  }
+
+  function closeCtrlMenu() {
+    el.controlCtrlMenu.hidden = true;
+    el.controlCtrl.classList.remove("active");
+    el.controlCtrl.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleCtrlMenu() {
+    if (el.controlCtrlMenu.hidden) {
+      el.controlCtrlMenu.hidden = false;
+      el.controlCtrl.classList.add("active");
+      el.controlCtrl.setAttribute("aria-expanded", "true");
+    } else {
+      closeCtrlMenu();
+    }
   }
 
   function viewedTarget() {
@@ -544,6 +565,23 @@
   el.controlUp.addEventListener("click", () => sendControlKey("Up"));
   el.controlDown.addEventListener("click", () => sendControlKey("Down"));
   el.controlEnter.addEventListener("click", () => sendControlKey("Enter"));
+  el.controlCtrl.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleCtrlMenu();
+  });
+  el.controlCtrlMenu.addEventListener("click", (event) => {
+    const key = event.target.closest("button")?.dataset.key;
+    if (!key) {
+      return;
+    }
+    sendControlKey(key);
+    closeCtrlMenu();
+  });
+  document.addEventListener("click", (event) => {
+    if (!el.controlCtrlMenu.hidden && !event.target.closest("#control-ctrl-wrap")) {
+      closeCtrlMenu();
+    }
+  });
   el.termWrap.addEventListener("scroll", updateScrollFollow, { passive: true });
   window.addEventListener("resize", applyFont);
   window.addEventListener("resize", sendViewState);

@@ -344,8 +344,7 @@ class MainActivity : ComponentActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        addQuickKey(quickRow, "A-", 1f) { adjustFont(-1) }
-        addQuickKey(quickRow, "A+", 1f) { adjustFont(1) }
+        addQuickKey(quickRow, "⌃", 1f) { anchor -> showControlKeys(anchor) }
         addQuickKey(quickRow, "^", 1f) { sendKey("Up") }
         addQuickKey(quickRow, "v", 1f) { sendKey("Down") }
         addQuickKey(quickRow, "enter", 1.45f, ButtonKind.Enter) { sendKey("Enter") }
@@ -419,9 +418,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun addQuickKey(row: LinearLayout, label: String, weight: Float, kind: ButtonKind = ButtonKind.Key, action: () -> Unit) {
-        row.addView(chromeButton(label, kind) { action() }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight).apply {
-            rightMargin = if (row.childCount < 4) dp(7) else 0
+    private fun addQuickKey(row: LinearLayout, label: String, weight: Float, kind: ButtonKind = ButtonKind.Key, action: (View) -> Unit) {
+        row.addView(chromeButton(label, kind, action), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight).apply {
+            rightMargin = if (row.childCount < 3) dp(7) else 0
         })
     }
 
@@ -640,6 +639,15 @@ class MainActivity : ComponentActivity() {
                 letterSpacing = 0.04f
                 setPadding(dp(2), 0, dp(2), dp(8))
             })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(chromeButton("font -", ButtonKind.Key) { adjustFont(-1) }, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
+                    rightMargin = dp(7)
+                })
+                addView(chromeButton("font +", ButtonKind.Key) { adjustFont(1) }, LinearLayout.LayoutParams(0, dp(38), 1f))
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(7)
+            })
             addView(chromeButton("auto-fit font", ButtonKind.Key) {
                 popup.dismiss()
                 resetFontToAuto()
@@ -663,6 +671,31 @@ class MainActivity : ComponentActivity() {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         }
         popup.showAsDropDown(anchor, -dp(136), dp(7), Gravity.NO_GRAVITY)
+    }
+
+    private fun showControlKeys(anchor: View) {
+        lateinit var popup: PopupWindow
+        val keys = listOf("^C" to "C-c", "^U" to "C-u", "^D" to "C-d", "^L" to "C-l", "^R" to "C-r")
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            background = roundedStroke(Chrome.surface, Chrome.borderAlpha, Chrome.radiusDp)
+            keys.forEachIndexed { index, (label, key) ->
+                addView(chromeButton(label, ButtonKind.Key) {
+                    popup.dismiss()
+                    sendKey(key)
+                }, LinearLayout.LayoutParams(dp(52), dp(40)).apply {
+                    if (index < keys.size - 1) rightMargin = dp(6)
+                })
+            }
+        }
+        popup = PopupWindow(row, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true).apply {
+            isOutsideTouchable = true
+            elevation = dp(6).toFloat()
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        }
+        row.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        popup.showAsDropDown(anchor, 0, -(anchor.height + row.measuredHeight + dp(7)), Gravity.NO_GRAVITY)
     }
 
     private fun adjustFont(delta: Int) {

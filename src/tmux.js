@@ -99,6 +99,56 @@ async function listPanes(session) {
   });
 }
 
+// Glob support for configured session entries: `*` matches any run of
+// characters and `?` a single one, like filename globbing. An entry with
+// neither is treated as a literal session name.
+function isSessionGlob(pattern) {
+  return /[*?]/.test(pattern);
+}
+
+function globToRegExp(pattern) {
+  const body = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".");
+  return new RegExp(`^${body}$`);
+}
+
+// All live tmux session names, in tmux's own listing order.
+async function listSessions() {
+  const result = await run(["list-sessions", "-F", "#{session_name}"]);
+  if (!result.ok) {
+    return [];
+  }
+  return result.stdout.split("\n").filter(Boolean);
+}
+
+// Resolve configured session entries to concrete names. Literals pass through
+// unchanged (and are still tried even when not currently live, as before);
+// glob entries like `foo*` expand to every matching live session. Order
+// follows the configured entries, glob matches in tmux's listing order, with
+// duplicates removed. tmux is only queried when a glob is actually present, so
+// plain-name configs keep their previous behaviour and cost nothing extra.
+async function expandSessions(patterns) {
+  if (!patterns.some(isSessionGlob)) {
+    return [...patterns];
+  }
+  const live = await listSessions();
+  const out = [];
+  const add = (name) => {
+    if (!out.includes(name)) out.push(name);
+  };
+  for (const pattern of patterns) {
+    if (isSessionGlob(pattern)) {
+      const re = globToRegExp(pattern);
+      live.filter((name) => re.test(name)).forEach(add);
+    } else {
+      add(pattern);
+    }
+  }
+  return out;
+}
+
 // List panes across several sessions, tagged by session and grouped in the
 // order requested. Sessions that don't exist are skipped silently.
 async function listPanesForSessions(sessions) {
@@ -143,6 +193,8 @@ module.exports = {
   capturePane,
   listPanes,
   listPanesForSessions,
+  listSessions,
+  expandSessions,
   sessionExists,
   resizeWindow,
   sendText,

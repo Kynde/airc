@@ -226,7 +226,7 @@ async function resolveActivePane(config, requestedSession = "") {
   if (requestedSession) {
     candidates.push(requestedSession);
   }
-  for (const session of config.sessions) {
+  for (const session of await tmux.expandSessions(config.sessions)) {
     if (!candidates.includes(session)) {
       candidates.push(session);
     }
@@ -414,7 +414,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       }
     }
     const liveSessions = (await Promise.all(
-      config.sessions.map(async (session) => (await tmux.sessionExists(session) ? session : null)),
+      (await tmux.expandSessions(config.sessions)).map(
+        async (session) => (await tmux.sessionExists(session) ? session : null),
+      ),
     )).filter(Boolean);
     const tmuxOk = liveSessions.length > 0;
     const ngrok = config.ngrok.enabled
@@ -531,9 +533,13 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       return;
     }
     if (url.pathname === "/api/tmux/panes" && request.method === "GET") {
-      tmux.listPanesForSessions(config.sessions).then((panes) => {
-        sendJson(response, 200, { ok: panes.length > 0, sessions: config.sessions, panes });
-      });
+      // Return the expanded session names (not the raw `foo*` patterns) so the
+      // client can order picker headers by configured precedence.
+      tmux.expandSessions(config.sessions).then((sessions) =>
+        tmux.listPanesForSessions(sessions).then((panes) => {
+          sendJson(response, 200, { ok: panes.length > 0, sessions, panes });
+        }),
+      );
       return;
     }
     if (url.pathname === "/api/tmux/input" && request.method === "POST") {

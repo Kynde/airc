@@ -345,8 +345,8 @@ class MainActivity : ComponentActivity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         addQuickKey(quickRow, "⌃", 1f) { anchor -> showControlKeys(anchor) }
-        addQuickKey(quickRow, "^", 1f) { sendKey("Up") }
-        addQuickKey(quickRow, "v", 1f) { sendKey("Down") }
+        addQuickKey(quickRow, "↑", 1f) { sendKey("Up") }
+        addQuickKey(quickRow, "↓", 1f) { sendKey("Down") }
         addQuickKey(quickRow, "enter", 1.45f, ButtonKind.Enter) { sendKey("Enter") }
 
         bottom.addView(inputRow)

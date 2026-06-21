@@ -23,6 +23,7 @@ If the argument is missing or anything else, stop and ask which level.
 **1. Pre-flight.** Stop and report if any fails:
 - On `master`: `git rev-parse --abbrev-ref HEAD`
 - Clean tree: `git status --porcelain` is empty
+- Sync tags from the remote: `git fetch --tags origin` — the latest tag is the source of truth, so a stale local tag list would otherwise compute a version that already exists on the remote.
 - `npm run check` passes
 
 **2. Compute the next version from the latest tag:**
@@ -39,6 +40,10 @@ esac
 next="$MA.$MI.$PA"        # bare, for package.json
 tag="v$next"             # v-prefixed, for the tag/release
 echo "$latest -> $tag"
+```
+Sanity-check the computed tag is free (it should be, after the pre-flight fetch). If it already exists, stop — the local list was stale or `$latest` is wrong:
+```bash
+git rev-parse -q --verify "refs/tags/$tag" >/dev/null && { echo "tag $tag already exists"; exit 1; }
 ```
 
 **3. Drag package.json along.** Read `package.json` `version`. If it does NOT already equal `$next`, set it to `$next` and commit exactly:

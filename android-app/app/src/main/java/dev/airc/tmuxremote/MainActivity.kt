@@ -675,27 +675,39 @@ class MainActivity : ComponentActivity() {
 
     private fun showControlKeys(anchor: View) {
         lateinit var popup: PopupWindow
-        val keys = listOf("Esc" to "Escape", "Tab" to "Tab", "^B" to "C-b", "^C" to "C-c", "^U" to "C-u", "^D" to "C-d", "^L" to "C-l", "^R" to "C-r")
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+        val keys = listOf("Esc" to "Escape", "Tab" to "Tab", "BS" to "Backspace", "^B" to "C-b", "^C" to "C-c", "^U" to "C-u", "^W" to "C-w", "^D" to "C-d", "^L" to "C-l", "^R" to "C-r")
+        // Beyond 8 buttons a single row overflows narrow screens, so wrap into rows.
+        val perRow = (keys.size + 1) / 2
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(dp(8), dp(8), dp(8), dp(8))
             background = roundedStroke(Chrome.surface, Chrome.borderAlpha, Chrome.radiusDp)
-            keys.forEachIndexed { index, (label, key) ->
-                addView(chromeButton(label, ButtonKind.Key) {
-                    popup.dismiss()
-                    sendKey(key)
-                }, LinearLayout.LayoutParams(dp(38), dp(40)).apply {
-                    if (index < keys.size - 1) rightMargin = dp(6)
+            keys.chunked(perRow).forEachIndexed { rowIndex, rowKeys ->
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    rowKeys.forEachIndexed { index, (label, key) ->
+                        addView(chromeButton(label, ButtonKind.Key) {
+                            popup.dismiss()
+                            sendKey(key)
+                        }, LinearLayout.LayoutParams(dp(38), dp(40)).apply {
+                            if (index < rowKeys.size - 1) rightMargin = dp(6)
+                        })
+                    }
+                }, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    if (rowIndex > 0) topMargin = dp(6)
                 })
             }
         }
-        popup = PopupWindow(row, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true).apply {
+        popup = PopupWindow(container, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true).apply {
             isOutsideTouchable = true
             elevation = dp(6).toFloat()
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         }
-        row.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
-        popup.showAsDropDown(anchor, 0, -(anchor.height + row.measuredHeight + dp(7)), Gravity.NO_GRAVITY)
+        container.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        popup.showAsDropDown(anchor, 0, -(anchor.height + container.measuredHeight + dp(7)), Gravity.NO_GRAVITY)
     }
 
     private fun adjustFont(delta: Int) {

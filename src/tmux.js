@@ -177,7 +177,7 @@ async function sendText(target, text) {
   return result.ok ? { ok: true, error: "" } : { ok: false, error: result.error };
 }
 
-const ALLOWED_KEYS = new Set(["Enter", "Up", "Down", "Left", "Right", "Tab", "Escape", "Space", "Backspace", "C-b", "C-c", "C-u", "C-d", "C-l", "C-r"]);
+const ALLOWED_KEYS = new Set(["Enter", "Up", "Down", "Left", "Right", "Tab", "Escape", "Space", "Backspace", "C-b", "C-c", "C-u", "C-w", "C-d", "C-l", "C-r"]);
 
 async function sendKey(target, key) {
   if (!ALLOWED_KEYS.has(key)) {

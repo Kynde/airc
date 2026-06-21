@@ -137,6 +137,8 @@ class MainActivity : ComponentActivity() {
     private var lastLanPreferAt: Long = 0
     private var statusPulse: ObjectAnimator? = null
     private var statusDetail: String = "connecting"
+    // Build the laptop server reported on the WS `hello`; shown in the status popup.
+    private var serverVersion: String = ""
     private var followWebViewLeft = true
     private var followWebViewBottom = true
     private var renderedAnchorTop = 0
@@ -535,6 +537,15 @@ class MainActivity : ComponentActivity() {
                     text = "${if (local) "wlan" else "ngrok"} · $lastGoodUrl"
                     typeface = monoTypeface
                     setTextColor(if (local) Chrome.primaryDim else Chrome.accent)
+                    textSize = 12f
+                    setPadding(0, dp(4), 0, dp(4))
+                })
+            }
+            if (serverVersion.isNotBlank()) {
+                addView(TextView(this@MainActivity).apply {
+                    text = "server build $serverVersion"
+                    typeface = monoTypeface
+                    setTextColor(Chrome.muted)
                     textSize = 12f
                     setPadding(0, dp(4), 0, dp(4))
                 })
@@ -1058,6 +1069,7 @@ class MainActivity : ComponentActivity() {
     private fun handleWsMessage(text: String) {
         val msg = try { JSONObject(text) } catch (_: Exception) { return }
         when (msg.optString("type")) {
+            "hello" -> msg.optString("serverVersion").takeIf { it.isNotBlank() }?.let { serverVersion = it }
             "frame" -> msg.optJSONObject("frame")?.let { renderFrame(it) }
             "heartbeat" -> postStatus("idle")
             "error" -> postStatus(msg.optString("error", "error"))

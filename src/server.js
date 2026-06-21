@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
+const { execFileSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -20,6 +21,25 @@ const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 function log(message) {
   console.log(`${new Date().toISOString()} ${message}`);
 }
+
+// The build the server is running, resolved once at startup (the "when started"
+// version). Mirrors the Android app's `git describe`: a tag when on one, else a
+// short hash, gaining `-dirty` for a modified tree. Falls back to package.json
+// when run outside a git tree (e.g. an extracted tarball).
+const SERVER_VERSION = (() => {
+  try {
+    return execFileSync("git", ["describe", "--tags", "--always", "--dirty"], {
+      cwd: __dirname,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString().trim() || `v${require("../package.json").version}`;
+  } catch {
+    try {
+      return `v${require("../package.json").version}`;
+    } catch {
+      return "unknown";
+    }
+  }
+})();
 
 function send(response, status, contentType, body, extraHeaders = {}) {
   response.writeHead(status, {
@@ -442,6 +462,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       : { running: false, url: "", uptimeMs: 0, restarts: 0, lastError: "disabled" };
     return {
       serverTime: new Date().toISOString(),
+      serverVersion: SERVER_VERSION,
       publicUrl: currentPublicUrl() || ngrok.url || "",
       ngrok: {
         enabled: Boolean(config.ngrok.enabled),
@@ -645,7 +666,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     }
 
     const timer = setInterval(() => sendFrame(false), config.pollMs);
-    send({ type: "hello", canControl: auth.level === "control" });
+    send({ type: "hello", canControl: auth.level === "control", serverVersion: SERVER_VERSION });
     // First frame is deferred until the client sends its `view` state, so we
     // never flash the active pane before a pin is known.
 

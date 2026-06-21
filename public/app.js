@@ -231,6 +231,9 @@
     if (payload.battery?.summary) {
       parts.push(`bat ${payload.battery.summary}`);
     }
+    if (payload.serverVersion) {
+      parts.push(`build ${payload.serverVersion}`);
+    }
     el.dashboard.innerHTML = parts.join(" · ");
   }
 

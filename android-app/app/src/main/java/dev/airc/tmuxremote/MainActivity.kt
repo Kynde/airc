@@ -675,7 +675,7 @@ class MainActivity : ComponentActivity() {
 
     private fun showControlKeys(anchor: View) {
         lateinit var popup: PopupWindow
-        val keys = listOf("^C" to "C-c", "^U" to "C-u", "^D" to "C-d", "^L" to "C-l", "^R" to "C-r")
+        val keys = listOf("Esc" to "Escape", "Tab" to "Tab", "^B" to "C-b", "^C" to "C-c", "^U" to "C-u", "^D" to "C-d", "^L" to "C-l", "^R" to "C-r")
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(8), dp(8), dp(8), dp(8))
@@ -684,7 +684,7 @@ class MainActivity : ComponentActivity() {
                 addView(chromeButton(label, ButtonKind.Key) {
                     popup.dismiss()
                     sendKey(key)
-                }, LinearLayout.LayoutParams(dp(52), dp(40)).apply {
+                }, LinearLayout.LayoutParams(dp(38), dp(40)).apply {
                     if (index < keys.size - 1) rightMargin = dp(6)
                 })
             }

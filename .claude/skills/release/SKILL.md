@@ -16,6 +16,7 @@ If the argument is missing or anything else, stop and ask which level.
 - `package.json` `version` is the **bare** number (`1.4.1`) and is dragged along to match the tag.
 - Android `versionName`/`versionCode` in `android-app/app/build.gradle.kts` are intentionally **static** — never bump them.
 - `gh release create` makes a **lightweight** tag; no APK is attached.
+- `gh release create` creates the tag on the **remote only** — fetch it back afterward so the local tree has it, otherwise `git describe` (which both the server and the Android build use to report their build) keeps reporting the *previous* tag plus a commit count.
 - Changelog = `git log --reverse` subjects (oldest first) over `<latestTag>..HEAD`, with the `Update version from package.json` bump commit filtered out.
 
 ## Steps
@@ -65,4 +66,10 @@ notes=$(git log --reverse --pretty='- %s' "$latest"..HEAD | grep -v '^- Update v
 gh release create "$tag" --target master --title "$tag" --notes "$notes"
 ```
 
-**6. Report** the release URL that `gh` prints.
+**6. Fetch the new tag back.** `gh release create` made the tag on the remote only, so pull it down so `git describe` resolves to the just-cut tag (not the previous one + commit count):
+```bash
+git fetch --tags origin
+git describe --tags    # should print exactly "$tag"
+```
+
+**7. Report** the release URL that `gh` prints.

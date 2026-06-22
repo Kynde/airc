@@ -4,6 +4,18 @@ This repo contains a private AI remote control for viewing and controlling a
 laptop tmux session from Android or a browser. Prefer small, direct changes;
 this is personal tooling, not a public product.
 
+## Start Here
+
+`ai/` is a curated, grep-friendly index of repo-specific ground truth — read it
+before greping from scratch, and add to it when you learn something non-obvious:
+
+- `ai/glossary.md` — easily-confused vocabulary, one `TERM :: definition` per line.
+- `ai/where-to-look.md` — `task :: path` pointers for "to do X, start in Y".
+- `ai/gotchas.md` — silent-failure and version-fragile knowledge (auth, tmux
+  capture, the attention scanner, anything that logs).
+
+Code wins on conflict: if a fact there is stale, fix the file.
+
 ## Architecture
 
 - Laptop server: dependency-light Node code in `src/`.

@@ -110,10 +110,11 @@ body {
   white-space: nowrap;
   cursor: pointer;
 }
-/* "waiting" is the urgent class: a coding agent is blocked on a prompt. */
+/* "waiting" is the urgent class: a coding agent is blocked on a prompt.
+   Cyan, matching the Android "needs you" chip. */
 #alerts .chip.waiting {
-  border-color: var(--warn);
-  color: var(--warn);
+  border-color: var(--c6);
+  color: var(--c6);
   animation: pulse 1.6s ease-in-out infinite;
 }
 /* "idle-input" is ambient: an agent finished and awaits the next instruction. */
@@ -121,21 +122,23 @@ body {
   border-color: var(--muted);
   color: var(--muted);
 }
-/* "busy" is informational: an agent is actively working — no action needed. */
+/* "busy" is informational: an agent is actively working — no action needed.
+   Amber, matching the Android "working" chip. */
 #alerts .chip.busy {
-  border-color: var(--c4);
-  color: var(--c4);
-}
-@keyframes pulse { 50% { opacity: 0.45; } }
-/* When auto mode is actively following a flagged pane, make the toggle glow. */
-#auto-toggle.armed {
   border-color: var(--warn);
   color: var(--warn);
+}
+@keyframes pulse { 50% { opacity: 0.45; } }
+/* When auto mode is actively following a flagged pane, make the toggle glow.
+   Cyan, matching the "needs you" chip it tracks. */
+#auto-toggle.armed {
+  border-color: var(--c6);
+  color: var(--c6);
 }
 /* A pane needs attention but auto is off — nudge the user to enable it. */
 #auto-toggle.hot {
-  border-color: var(--warn);
-  color: var(--warn);
+  border-color: var(--c6);
+  color: var(--c6);
   animation: pulse 1.6s ease-in-out infinite;
 }
 #term-wrap {

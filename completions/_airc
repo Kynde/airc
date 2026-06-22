@@ -1,0 +1,65 @@
+#compdef airc
+# zsh completion for airc (tools/airc). Versioned in the repo; put it on $fpath
+# by symlinking it into a completion dir (mirrors how ~/bin/airc -> tools/airc):
+#   ln -s ~/airc/completions/_airc ~/.zsh/completion/_airc
+# After editing, restart zsh (or rerun compinit) to pick up changes.
+
+# Live tmux session names for --session / --tmux-target.
+_airc_sessions() {
+  local -a sessions
+  sessions=( ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null)"} )
+  (( ${#sessions} )) && _describe -t sessions 'tmux session' sessions
+}
+
+# Options the server accepts (on/local/restart pass these through to
+# src/server.js; the parser lives in src/config.js parseArgs).
+_airc_server_args() {
+  _arguments \
+    '*--host[bind address]:host:_hosts' \
+    '*--port[listen port]:port:' \
+    '*--session[tmux session]:session:_airc_sessions' \
+    '*--tmux-target[tmux target (alias of --session)]:target:_airc_sessions' \
+    '--config[path to config.json]:config file:_files' \
+    '--no-ngrok[disable the ngrok tunnel]' \
+    '--print-url[print the URL and exit]' \
+    '--pair[print pairing info]' \
+    '(-h --help)'{-h,--help}'[show help]'
+}
+
+_airc() {
+  local curcontext=$curcontext state line
+  typeset -A opt_args
+
+  local -a subcommands=(
+    'on:start the tmux remote server using config defaults'
+    'local:start for same-WLAN phone access (--host 0.0.0.0 --no-ngrok)'
+    'off:stop the background server'
+    'restart:stop then start'
+    'status:show process and /healthz state'
+    'url:print configured view URL'
+    'pair-app:print Android app pairing QR/JSON with control token'
+    'pair-web:print browser QR/URL/token with view token'
+    'pair-web-control:print browser QR/URL/token with control token'
+    'logs:print the background server log path'
+  )
+
+  _arguments -C \
+    '1:command:->command' \
+    '*::arg:->args'
+
+  case $state in
+    command) _describe -t commands 'airc command' subcommands ;;
+    args)
+      case ${line[1]} in
+        on|local|restart) _airc_server_args ;;
+        status) _arguments '--json[machine-readable output]' ;;
+      esac
+      ;;
+  esac
+}
+
+if [[ $funcstack[1] = _airc ]]; then
+  _airc "$@"
+else
+  compdef _airc airc
+fi

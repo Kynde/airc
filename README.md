@@ -56,6 +56,19 @@ send tmux input from the Android app or trusted browser UI. `pair-web` prints a
 QR/URL with the view token; `pair-web-control` prints one with the control
 token.
 
+### Zsh completions
+
+`completions/_airc` completes subcommands, `status --json`, and the server
+flags for `on`/`local`/`restart` (with live tmux session names for
+`--session`). Put it on your `$fpath` by symlinking it into a completion dir,
+mirroring how `~/bin/airc` points at `tools/airc`:
+
+```sh
+ln -s "$PWD/completions/_airc" ~/.zsh/completion/_airc   # a dir on your $fpath
+```
+
+Restart zsh (or rerun `compinit`) to load it.
+
 ## Android App
 
 The app has:
@@ -125,6 +138,7 @@ Gradle is installed at `~/android/gradle-9.4.1`; JDK 17 is installed at
 ## Files
 
 - `tools/airc`: start/stop/status/pair wrapper for the laptop server
+- `completions/_airc`: zsh completion for the `airc` wrapper
 - `src/server.js`: HTTP API and lifecycle
 - `src/tmux.js`: tmux capture, pane listing, and input forwarding
 - `android-app/`: native Android client

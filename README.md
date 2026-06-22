@@ -66,6 +66,8 @@ The app has:
 - Android keyboard text input, including dictation support from the system IME
 - quick keys for Up, Down, Enter
 - `A-` / `A+` app-side font adjustment
+- attention chips + an `auto` toggle that follows whichever pane's agent needs
+  you (see [Attention](docs/attention.md))
 - QR or manual pairing
 - LAN/public endpoint fallback from one pairing payload
 
@@ -115,6 +117,8 @@ Gradle is installed at `~/android/gradle-9.4.1`; JDK 17 is installed at
 - [Development](docs/development.md): architecture, APIs, build/test notes
 - [Implementation Notes](docs/implementation-notes.md): tmux capture, auth,
   polling, sizing
+- [Attention](docs/attention.md): detecting which pane's agent needs you, the
+  `auto` follow mode, and wiring agent hooks
 - [Tesla Browser Findings](docs/tesla-browser.md): in-car browser/network notes
 - [Future Work](docs/future-work.md): known next improvements
 

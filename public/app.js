@@ -9,6 +9,8 @@
     dot: document.getElementById("dot"),
     state: document.getElementById("state"),
     note: document.getElementById("note"),
+    alerts: document.getElementById("alerts"),
+    autoToggle: document.getElementById("auto-toggle"),
     dashboard: document.getElementById("dashboard"),
     paneLabel: document.getElementById("pane-label"),
     fontMinus: document.getElementById("font-minus"),
@@ -55,6 +57,8 @@
   let pinned = localStorage.getItem("airc_pin") || "";
   let followSession = localStorage.getItem("airc_session") || "";
   let currentSession = "";
+  let auto = localStorage.getItem("airc_auto") === "1";
+  let attentionList = [];
   let fontMode = localStorage.getItem("airc_font_mode") || "auto";
   let fontSize = Number(localStorage.getItem("airc_font_size")) || 13;
   let controlsVisible = localStorage.getItem("airc_controls_visible") === "1";
@@ -162,6 +166,14 @@
       closeCtrlMenu();
     }
     applyFont();
+  }
+
+  function applyAttentionVisibility() {
+    el.autoToggle.hidden = !cfg.attentionEnabled;
+    el.autoToggle.classList.toggle("active", auto);
+    if (!cfg.attentionEnabled) {
+      el.alerts.hidden = true;
+    }
   }
 
   function closeCtrlMenu() {
@@ -340,6 +352,8 @@
     }
     fallbackStarted = true;
     loop();
+    pollAttention();
+    setInterval(pollAttention, 2000);
   }
 
   function startWebSocket() {
@@ -366,6 +380,8 @@
           }
         } else if (payload.type === "heartbeat") {
           lastOkAt = Date.now();
+        } else if (payload.type === "attention") {
+          renderAttention(payload.items);
         }
       } catch {
         // Ignore malformed stream messages and keep the socket alive.
@@ -401,6 +417,23 @@
     }
     etag = response.headers.get("ETag");
     renderFrame(await response.json());
+  }
+
+  // Attention reaches WebSocket clients in the frame stream. The HTTP-poll
+  // fallback has no such push, so poll it directly — but only while the
+  // fallback is active and the feature is on, so we add no traffic otherwise.
+  async function pollAttention() {
+    if (!fallbackStarted || !cfg.attentionEnabled) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/attention", { cache: "no-store", headers: headers() });
+      if (response.ok) {
+        renderAttention((await response.json()).items);
+      }
+    } catch {
+      // Transient; the next poll retries.
+    }
   }
 
   function schedule() {
@@ -443,7 +476,20 @@
     el.state.textContent = changeAge > 10000 ? `idle ${Math.round(changeAge / 1000)}s` : "live";
   }, 500);
 
+  // Pin the view to a pane. Shared by the manual picker and auto mode; only the
+  // manual path disables auto (see selectPane), so an auto-driven pin doesn't
+  // turn auto off.
+  function applyPin(pane) {
+    pinned = pane.paneId;
+    localStorage.setItem("airc_pin", pinned);
+    followSession = pane.session || "";
+    localStorage.setItem("airc_session", followSession);
+    etag = null;
+    sendViewState();
+  }
+
   function selectFollow(session) {
+    setAuto(false); // an explicit session choice is a manual override
     pinned = "";
     localStorage.removeItem("airc_pin");
     followSession = session;
@@ -454,13 +500,61 @@
   }
 
   function selectPane(pane) {
-    pinned = pane.paneId;
-    localStorage.setItem("airc_pin", pinned);
-    followSession = pane.session || "";
-    localStorage.setItem("airc_session", followSession);
-    etag = null;
-    sendViewState();
+    setAuto(false); // an explicit pane choice is a manual override
+    applyPin(pane);
     el.picker.hidden = true;
+  }
+
+  // The pane auto mode should follow: the most urgent (waiting before
+  // idle-input, then oldest) flagged pane. The server already sorts the list
+  // that way, so the head is the target. Returns undefined when nothing needs
+  // attention — auto is then "sticky" and holds the current view.
+  function autoTarget() {
+    return attentionList[0];
+  }
+
+  function applyAuto() {
+    if (!auto) {
+      return;
+    }
+    const target = autoTarget();
+    el.autoToggle.classList.toggle("armed", Boolean(target));
+    if (target && target.paneId !== pinned) {
+      applyPin(target);
+    }
+  }
+
+  function setAuto(on) {
+    if (auto === on) {
+      return;
+    }
+    auto = on;
+    localStorage.setItem("airc_auto", on ? "1" : "0");
+    el.autoToggle.classList.toggle("active", auto);
+    if (!auto) {
+      el.autoToggle.classList.remove("armed");
+    }
+    applyAuto();
+  }
+
+  function renderAttention(items) {
+    attentionList = Array.isArray(items) ? items : [];
+    const waiting = attentionList.filter((item) => item.state === "waiting");
+    // Build tap-to-switch chips: every flagged pane, urgent ones styled hot.
+    el.alerts.replaceChildren();
+    for (const item of attentionList) {
+      const chip = document.createElement("button");
+      chip.className = `chip ${item.state}`;
+      const where = `${item.windowName}:${item.paneIndex}`;
+      const mark = item.state === "waiting" ? "● " : "○ ";
+      chip.textContent = `${mark}${item.agent || "agent"} ${where}`;
+      chip.title = item.state === "waiting" ? "needs interaction — tap to switch" : "finished — tap to switch";
+      chip.addEventListener("click", () => selectPane(item));
+      el.alerts.appendChild(chip);
+    }
+    el.alerts.hidden = attentionList.length === 0;
+    el.autoToggle.classList.toggle("hot", waiting.length > 0 && !auto);
+    applyAuto();
   }
 
   async function openPicker() {
@@ -542,6 +636,10 @@
     localStorage.setItem("airc_controls_visible", controlsVisible ? "1" : "0");
     applyControlsVisibility();
   });
+  el.autoToggle.addEventListener("click", () => {
+    setAuto(!auto);
+    el.autoToggle.classList.remove("hot");
+  });
   el.themeToggle.addEventListener("click", () => {
     const next = document.body.classList.contains("theme-day") ? "dark" : "day";
     localStorage.setItem("airc_theme", next);
@@ -600,6 +698,7 @@
       }
       cfg = { ...cfg, ...(await response.json()) };
       applyControlsVisibility();
+      applyAttentionVisibility();
     } catch {
       // Polling will keep retrying.
     }

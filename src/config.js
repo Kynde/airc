@@ -19,6 +19,16 @@ const DEFAULTS = {
   fontSizeDefault: 13,
   theme: "dark",
   resizeToViewport: false,
+  // Attention scanning: watch other panes for an agent that needs interaction.
+  // scanMs is decoupled from pollMs because a scan captures every candidate
+  // pane, not just the viewed one. debounceScans guards against mid-render
+  // flicker; maxPanes caps work per cycle (excess is logged, never silent).
+  attention: {
+    enabled: true,
+    scanMs: 1500,
+    debounceScans: 2,
+    maxPanes: 24,
+  },
   ngrok: {
     enabled: true,
     domain: "carrousel-value-recipient.ngrok-free.dev",
@@ -105,6 +115,7 @@ function loadConfig(argv) {
     ...DEFAULTS,
     ...fileConfig,
     ngrok: { ...DEFAULTS.ngrok, ...(fileConfig.ngrok || {}) },
+    attention: { ...DEFAULTS.attention, ...(fileConfig.attention || {}) },
   };
   if (args.host !== undefined) config.host = args.host;
   if (args.port !== undefined) config.port = args.port;

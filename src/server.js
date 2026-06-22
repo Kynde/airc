@@ -10,6 +10,7 @@ const path = require("node:path");
 const { ansiToHtml } = require("./ansi");
 const { authLevel, authCookie, tokenEquals } = require("./auth");
 const { loadConfig, bookmarkUrl, pairingPayload, localLanAddresses } = require("./config");
+const { detectPaneState, STATE } = require("./detect");
 const { startNgrok } = require("./ngrok");
 const tmux = require("./tmux");
 
@@ -297,6 +298,172 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
   };
   const resizeState = { lastCols: 0, lastRows: 0, lastAt: 0 };
 
+  // --- Attention: which panes have an agent that needs interaction ----------
+  // A single server-wide scan (not per-connection) captures every candidate
+  // pane on an interval, classifies it with the per-agent recognizers, and
+  // keeps the result so any client — or the auto mode — can ask "who needs me?"
+  // Two sources feed the same map: the screen scan, and agent hooks POSTing to
+  // /api/agent/event. A hook is authoritative until a screen read contradicts
+  // it, so agents that support hooks get instant, exact signals while everyone
+  // else still works zero-config.
+  const SHELL_COMMANDS = new Set(["zsh", "bash", "sh", "fish", "-zsh", "-bash", "login", "tmux"]);
+  const HOOK_TTL_MS = 15000; // a hook signal stops overriding the screen after this
+  const attention = new Map(); // paneId -> { session, windowName, paneIndex, agent, state, since, source, lastHash, hookAt, pendingState, pendingCount }
+  let scanning = false;
+
+  function viewerCount() {
+    return wsSockets.size;
+  }
+
+  // Map a hook `event` onto an attention state. Hooks speak in coarse terms
+  // (the agent is waiting / working / done); the screen scan refines from there.
+  function hookEventToState(event) {
+    if (event === "waiting") return STATE.WAITING;
+    if (event === "busy") return STATE.BUSY;
+    if (event === "idle") return STATE.IDLE_INPUT;
+    return "";
+  }
+
+  // Record an agent-reported event. Trusted over the screen for HOOK_TTL_MS so a
+  // hook's "waiting" isn't immediately overwritten by a not-yet-rendered screen.
+  function recordHookEvent(paneId, event) {
+    const state = hookEventToState(event);
+    if (!state) {
+      return false;
+    }
+    const now = Date.now();
+    const prev = attention.get(paneId);
+    const entry = prev || { session: "", windowName: "", paneIndex: 0, agent: "", lastHash: "" };
+    if (entry.state !== state) {
+      entry.since = now;
+    }
+    entry.state = state;
+    entry.source = "hook";
+    entry.hookAt = now;
+    entry.pendingState = undefined;
+    entry.pendingCount = 0;
+    attention.set(paneId, entry);
+    return true;
+  }
+
+  // Fold one screen classification into the map, with debounce: a new
+  // waiting/idle-input state must persist across config.attention.debounceScans
+  // scans before it's published, so a mid-render frame can't flash a false
+  // "needs you". busy and clearing are applied immediately (they're not urgent
+  // and quick clearing is desirable). Returns nothing; mutates `attention`.
+  function applyScreenState(pane, detected) {
+    const now = Date.now();
+    const paneId = pane.paneId;
+    const prev = attention.get(paneId);
+
+    // A live hook signal wins until it goes stale.
+    if (prev && prev.source === "hook" && now - (prev.hookAt || 0) < HOOK_TTL_MS) {
+      // Keep the hook state but refresh the pane's display metadata.
+      prev.session = pane.session;
+      prev.windowName = pane.windowName;
+      prev.paneIndex = pane.paneIndex;
+      return;
+    }
+
+    const debounce = Math.max(1, config.attention.debounceScans || 1);
+    const target = detected.state;
+    const needsDebounce = target === STATE.WAITING || target === STATE.IDLE_INPUT;
+
+    const entry = prev || { since: now, state: STATE.NONE, source: "screen", pendingState: undefined, pendingCount: 0 };
+    entry.session = pane.session;
+    entry.windowName = pane.windowName;
+    entry.paneIndex = pane.paneIndex;
+    entry.agent = detected.agent || entry.agent || "";
+    entry.source = "screen";
+
+    if (target === entry.state) {
+      entry.pendingState = undefined;
+      entry.pendingCount = 0;
+      attention.set(paneId, entry);
+      return;
+    }
+
+    if (needsDebounce) {
+      if (entry.pendingState === target) {
+        entry.pendingCount += 1;
+      } else {
+        entry.pendingState = target;
+        entry.pendingCount = 1;
+      }
+      if (entry.pendingCount >= debounce) {
+        entry.state = target;
+        entry.since = now;
+        entry.pendingState = undefined;
+        entry.pendingCount = 0;
+      }
+    } else {
+      // BUSY / NONE apply at once.
+      entry.state = target;
+      entry.since = now;
+      entry.pendingState = undefined;
+      entry.pendingCount = 0;
+    }
+    attention.set(paneId, entry);
+  }
+
+  async function scanAttention() {
+    if (scanning || !config.attention.enabled || viewerCount() === 0) {
+      return;
+    }
+    scanning = true;
+    try {
+      const sessions = await tmux.expandSessions(config.sessions);
+      const panes = await tmux.listPanesForSessions(sessions);
+      const live = new Set();
+      const candidates = panes.filter((pane) => !SHELL_COMMANDS.has(pane.command));
+      const cap = config.attention.maxPanes || candidates.length;
+      if (candidates.length > cap) {
+        log(`attention: scanning ${cap} of ${candidates.length} candidate panes (maxPanes)`);
+      }
+      for (const pane of candidates.slice(0, cap)) {
+        live.add(pane.paneId);
+        const capture = await tmux.capturePanePlain(pane.paneId);
+        if (!capture.ok) {
+          continue;
+        }
+        const detected = detectPaneState({ text: capture.text, command: pane.command });
+        applyScreenState(pane, detected);
+      }
+      // Drop panes that vanished or are no longer candidates (closed/became a shell).
+      for (const paneId of [...attention.keys()]) {
+        const entry = attention.get(paneId);
+        const hookFresh = entry.source === "hook" && Date.now() - (entry.hookAt || 0) < HOOK_TTL_MS;
+        if (!live.has(paneId) && !hookFresh) {
+          attention.delete(paneId);
+        }
+      }
+    } catch (error) {
+      log(`attention scan failed: ${error.message}`);
+    } finally {
+      scanning = false;
+    }
+  }
+
+  // Panes needing interaction, urgent (waiting) first then oldest-waiting first,
+  // shaped for the wire. idle-input is included but ranks below waiting so the
+  // HUD can show "finished" panes without burying the urgent ones.
+  function attentionItems() {
+    const rank = { [STATE.WAITING]: 0, [STATE.IDLE_INPUT]: 1 };
+    return [...attention.entries()]
+      .filter(([, e]) => e.state === STATE.WAITING || e.state === STATE.IDLE_INPUT)
+      .map(([paneId, e]) => ({
+        paneId,
+        session: e.session,
+        windowName: e.windowName,
+        paneIndex: e.paneIndex,
+        agent: e.agent,
+        state: e.state,
+        since: e.since,
+        source: e.source,
+      }))
+      .sort((a, b) => (rank[a.state] - rank[b.state]) || (a.since - b.since));
+  }
+
   // Per-IP brute-force throttle for wrong-token requests, plus a cap on
   // concurrent websockets. Note: clientAddress() ultimately trusts
   // X-Forwarded-For from the fronting proxy (ngrok), so this raises the bar
@@ -463,6 +630,35 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     sendJson(response, 200, { ok: true, target: target.target });
   }
 
+  async function handleAgentEvent(request, response) {
+    let payload;
+    try {
+      payload = await readJsonBody(request);
+    } catch (error) {
+      sendJson(response, 400, { ok: false, error: error.message });
+      return;
+    }
+    const paneId = typeof payload.paneId === "string" ? payload.paneId : "";
+    if (!/^%\d+$/.test(paneId)) {
+      sendJson(response, 400, { ok: false, error: "invalid paneId" });
+      return;
+    }
+    if (!recordHookEvent(paneId, payload.event)) {
+      sendJson(response, 400, { ok: false, error: "event must be waiting, busy, or idle" });
+      return;
+    }
+    // Best-effort label so the HUD names the pane right away rather than waiting
+    // for the next scan to fill session/window in.
+    const meta = await tmux.paneMeta(paneId);
+    const entry = attention.get(paneId);
+    if (meta && entry) {
+      entry.session = meta.session;
+      entry.windowName = meta.windowName;
+      entry.paneIndex = meta.paneIndex;
+    }
+    sendJson(response, 200, { ok: true, paneId, state: attention.get(paneId).state });
+  }
+
   async function handleHealthz(response) {
     const now = Date.now();
     for (const [address, ts] of stats.viewers) {
@@ -599,6 +795,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
         fontSizeDefault: config.fontSizeDefault,
         theme: config.theme,
         resizeToViewport: config.resizeToViewport,
+        attentionEnabled: Boolean(config.attention.enabled),
         canControl,
         authLevel: auth.level,
         publicUrl: currentPublicUrl() || "",
@@ -640,6 +837,24 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       handleInput(request, response);
       return;
     }
+    if (url.pathname === "/api/attention" && request.method === "GET") {
+      // View-level: seeing which panes need attention reveals no pane contents,
+      // and auto mode must work for view-only clients. The poll fallback path
+      // (no websocket) reads this.
+      sendJson(response, 200, { ok: true, items: attentionItems() }, extraHeaders);
+      return;
+    }
+    if (url.pathname === "/api/agent/event" && request.method === "POST") {
+      // Agent hooks (Claude Code Notification/Stop, Codex notify) POST here.
+      // Control-gated: a hook can steer auto mode and the HUD, same trust level
+      // as sending input. The local CLI passes the control token.
+      if (!canControl) {
+        notFound(response);
+        return;
+      }
+      handleAgentEvent(request, response);
+      return;
+    }
     if (url.pathname === "/api/probe/poll" && request.method === "GET") {
       sendJson(response, 200, {
         server_time: new Date().toISOString(),
@@ -656,6 +871,13 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     notFound(response);
   });
   const wsSockets = new Set();
+
+  // One server-wide attention scan loop. It self-gates on viewerCount() so an
+  // idle server (no clients connected) issues zero tmux calls; unref() lets the
+  // process exit without waiting on it.
+  if (config.attention.enabled) {
+    setInterval(scanAttention, config.attention.scanMs).unref();
+  }
 
   function rejectUpgrade(socket, status = 404) {
     socket.write(`HTTP/1.1 ${status} ${status === 404 ? "Not Found" : "Bad Request"}\r\nConnection: close\r\n\r\n`);
@@ -711,12 +933,28 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       // which pane to show. Otherwise a pinned viewer briefly sees the active
       // pane on every (re)connect before the pin arrives.
       viewReady: false,
+      attentionJson: "",
     };
 
     function send(payload) {
       if (!wsState.closed && socket.writable) {
         socket.write(websocketFrame(JSON.stringify(payload)));
       }
+    }
+
+    // Push the current attention list when it differs from what this socket
+    // last saw. Cheap: reads the already-computed map, no tmux work here.
+    function sendAttention(force = false) {
+      if (wsState.closed || !config.attention.enabled) {
+        return;
+      }
+      const items = attentionItems();
+      const json = JSON.stringify(items);
+      if (!force && json === wsState.attentionJson) {
+        return;
+      }
+      wsState.attentionJson = json;
+      send({ type: "attention", items });
     }
 
     async function sendFrame(force = false) {
@@ -738,6 +976,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
         } else {
           send({ type: "heartbeat", serverTime: new Date().toISOString() });
         }
+        sendAttention();
       } catch (error) {
         send({ type: "error", error: error.message });
       } finally {

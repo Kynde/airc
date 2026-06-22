@@ -10,6 +10,12 @@
   "fontSizeDefault": 13,
   "theme": "dark",
   "resizeToViewport": false,
+  "attention": {
+    "enabled": true,
+    "scanMs": 1500,
+    "debounceScans": 2,
+    "maxPanes": 24
+  },
   "ngrok": {
     "enabled": true,
     "domain": "carrousel-value-recipient.ngrok-free.dev",

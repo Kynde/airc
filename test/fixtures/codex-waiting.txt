@@ -1,0 +1,73 @@
+╭───────────────────────────────────────────────────────────────╮
+│ ✨ Update available! 0.136.0 -> 0.141.0                       │
+│ See https://github.com/openai/codex for installation options. │
+│                                                               │
+│ See full release notes:                                       │
+│ https://github.com/openai/codex/releases/latest               │
+╰───────────────────────────────────────────────────────────────╯
+
+╭───────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.136.0)            │
+│                                       │
+│ model:     gpt-5.5   /model to change │
+│ directory: ~/airc                     │
+╰───────────────────────────────────────╯
+
+  Tip: Use /status to see the current model, approvals, and token usage.
+
+
+› codex --ask-for-approval on-request --sandbox workspace-writeRun a git command to create a new branch called codex-probe-test
+
+
+• I’ll create the branch with Git in the repo root. This writes to .git, so I’m running it with approval.
+
+• The harness rejected explicit escalation under the current approval policy, so I’m retrying through the normal command path and letting the environment decide whether it’s trusted.
+
+• Running git branch codex-probe-test
+
+
+  Would you like to run the following command?
+
+  $ git branch codex-probe-test
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `git branch codex-probe-test` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

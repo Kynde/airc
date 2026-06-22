@@ -92,6 +92,47 @@ body {
 }
 #dashboard .ok { color: var(--accent); }
 #dashboard .bad { color: var(--bad); }
+#alerts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#alerts[hidden] { display: none; }
+#alerts .chip {
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+/* "waiting" is the urgent class: a coding agent is blocked on a prompt. */
+#alerts .chip.waiting {
+  border-color: var(--warn);
+  color: var(--warn);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+/* "idle-input" is ambient: an agent finished and awaits the next instruction. */
+#alerts .chip.idle-input {
+  border-color: var(--muted);
+  color: var(--muted);
+}
+@keyframes pulse { 50% { opacity: 0.45; } }
+/* When auto mode is actively following a flagged pane, make the toggle glow. */
+#auto-toggle.armed {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+/* A pane needs attention but auto is off — nudge the user to enable it. */
+#auto-toggle.hot {
+  border-color: var(--warn);
+  color: var(--warn);
+  animation: pulse 1.6s ease-in-out infinite;
+}
 #term-wrap {
   position: relative;
   flex: 1;

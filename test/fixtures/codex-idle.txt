@@ -1,0 +1,13 @@
+╭───────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.136.0)            │
+│                                       │
+│ model:     gpt-5.5   /model to change │
+│ directory: ~/airc                     │
+╰───────────────────────────────────────╯
+
+  Tip: Use /fork to branch the current chat into a new thread.
+
+
+› Find and fix a bug in @filename
+
+  gpt-5.5 default · ~/airc · master · No changes · Ready · Context 0% used · 5h 99% left · 0 in · 0 out

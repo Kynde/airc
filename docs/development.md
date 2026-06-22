@@ -61,6 +61,8 @@ Pairing payload behavior:
 - `GET /api/tmux/frame`
 - `GET /api/tmux/panes`
 - `POST /api/tmux/input`
+- `GET /api/attention` (panes whose agent needs interaction; see [attention.md](attention.md))
+- `POST /api/agent/event` (agent hook; control token)
 - `GET /api/status`
 - `GET /probe`
 - `GET /api/probe/poll`

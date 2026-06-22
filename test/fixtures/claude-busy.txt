@@ -1,0 +1,17 @@
+  Bash(echo "=== grep interrupt across claude panes ==="; for p in %24 %45 %33; do echo "--- $p
+      ---"; tmux capture-pane -p -t $p | grep -niE "esc to interrupt|to inter…)
+  ⎿  Running…
+
+✽ Beaming… (9m 3s · ↓ 42.7k tokens)
+  ⎿  ◻ Lock Claude Code + Codex detector signatures from real captures
+     ◻ Add capturePanePlain + pane_current_command to src/tmux.js
+     ◻ Create src/detect.js with pluggable per-agent recognizers
+      … +5 pending
+
+────────────────────────────────────────────────────────────────────────── tmux-agent-detection ──
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────────
+  BEDROCK Opus 4.8 🔮 | 🌿 master ✔ 📁 ~/airc
+  ████████░░░░░░░░░░░░ 42% | ⏱️  42m 13s | 📊 ↑84.6K ↓2.4K | 💰 $0.6481 ($4.1015)
+  ⏵⏵ accept edits on (shift+tab to cycle)
+                                                                               ◉ xhigh · /effort

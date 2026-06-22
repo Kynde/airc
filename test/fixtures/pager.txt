@@ -1,0 +1,12 @@
+commit 479f39f8c0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5 (HEAD -> master)
+Author: Tommi Kyntola <tommi@example.com>
+Date:   Sun Jun 22 08:10:00 2026 +0300
+
+    Fetch the new tag back after creating the release
+
+commit db35a20a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e
+Author: Tommi Kyntola <tommi@example.com>
+Date:   Sun Jun 22 08:05:00 2026 +0300
+
+    Update version from package.json
+:

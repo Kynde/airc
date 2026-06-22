@@ -68,6 +68,16 @@ async function capturePane(paneId) {
   return { ok: true, text: result.stdout.replace(/\s+$/u, ""), error: "" };
 }
 
+// Plain (no `-e`) capture for attention detection: the recognizers match on
+// text, never colour, so the SGR codes `-e` adds would only get in the way.
+async function capturePanePlain(paneId) {
+  const result = await run(["capture-pane", "-p", "-t", paneId]);
+  if (!result.ok) {
+    return { ok: false, text: "", error: result.error };
+  }
+  return { ok: true, text: result.stdout.replace(/\s+$/u, ""), error: "" };
+}
+
 async function listPanes(session) {
   const format = [
     "#{pane_id}",
@@ -78,6 +88,7 @@ async function listPanes(session) {
     "#{pane_width}",
     "#{pane_height}",
     "#{window_active}#{pane_active}",
+    "#{pane_current_command}",
   ].join("\t");
   const result = await run(["list-panes", "-s", "-t", `=${session}`, "-F", format]);
   if (!result.ok) {
@@ -95,6 +106,7 @@ async function listPanes(session) {
       width: Number(parts[5]),
       height: Number(parts[6]),
       active: parts[7] === "11",
+      command: parts[8] || "",
     };
   });
 }
@@ -191,6 +203,7 @@ module.exports = {
   activePane,
   paneMeta,
   capturePane,
+  capturePanePlain,
   listPanes,
   listPanesForSessions,
   listSessions,

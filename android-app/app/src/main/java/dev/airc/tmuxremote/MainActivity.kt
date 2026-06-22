@@ -26,6 +26,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupWindow
@@ -65,6 +66,18 @@ data class Pane(
     val paneId: String,
     val label: String,
     val active: Boolean
+)
+
+// A pane whose agent needs interaction, as reported by the server's attention
+// scan / hooks. state is "waiting" (urgent: blocked on a prompt) or
+// "idle-input" (ambient: finished, awaiting the next instruction).
+data class AttentionItem(
+    val paneId: String,
+    val session: String,
+    val windowName: String,
+    val paneIndex: Int,
+    val agent: String,
+    val state: String
 )
 
 // Rows rendered in the pane picker: a session header (follows that session's
@@ -117,11 +130,18 @@ class MainActivity : ComponentActivity() {
     private lateinit var statusDot: View
     private lateinit var endpointTag: TextView
     private lateinit var paneButton: Button
+    private lateinit var autoButton: Button
+    private lateinit var alertsRow: LinearLayout
+    private lateinit var alertsScroll: HorizontalScrollView
     private lateinit var input: EditText
     private var profile: Profile? = null
     private var pinnedPane: String = ""
     private var followSession: String = ""
     private var currentSession: String = ""
+    private var autoMode: Boolean = false
+    private var attentionEnabled: Boolean = false
+    private var attentionItems: List<AttentionItem> = emptyList()
+    private var lastAttentionJson: String = ""
     private var etag: String? = null
     private var polling = false
     private var ws: WebSocket? = null
@@ -163,6 +183,7 @@ class MainActivity : ComponentActivity() {
         profile = loadProfile()
         pinnedPane = prefs().getString("pinnedPane", "") ?: ""
         followSession = prefs().getString("followSession", "") ?: ""
+        autoMode = prefs().getBoolean("autoMode", false)
         lastGoodUrl = prefs().getString("lastGoodUrl", "") ?: ""
         buildUi()
         if (profile == null) {
@@ -276,10 +297,17 @@ class MainActivity : ComponentActivity() {
             leftMargin = dp(9)
         })
         paneButton = chromeButton("active", ButtonKind.PaneActive) { showPanePicker() }
+        // "auto" follows the pane that needs interaction; hidden until the server
+        // reports the attention feature is on (set in applyConfig).
+        autoButton = chromeButton("auto", ButtonKind.PaneInactive) { toggleAuto() }.apply {
+            visibility = View.GONE
+        }
         val settingsButton = chromeButton("⚙", ButtonKind.IconAccent) { anchor -> showSettingsMenu(anchor) }
         top.addView(statusWrap, LinearLayout.LayoutParams(0, dp(34), 1f))
+        top.addView(autoButton, LinearLayout.LayoutParams(dp(58), dp(34)).apply {
+            rightMargin = dp(6)
+        })
         top.addView(paneButton, LinearLayout.LayoutParams(dp(112), dp(34)).apply {
-            leftMargin = dp(6)
             rightMargin = dp(6)
         })
         top.addView(settingsButton, LinearLayout.LayoutParams(dp(42), dp(34)))
@@ -356,7 +384,24 @@ class MainActivity : ComponentActivity() {
             topMargin = dp(8)
         })
 
+        // Attention chips: one tap-to-switch chip per pane that needs you. The
+        // row stays GONE (zero height) until something is flagged.
+        alertsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            setBackgroundColor(Chrome.surface)
+            visibility = View.GONE
+        }
+        alertsScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            setBackgroundColor(Chrome.surface)
+            addView(alertsRow)
+            visibility = View.GONE
+        }
+
         root.addView(top)
+        root.addView(alertsScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         root.addView(webView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(bottom)
         setContentView(root)
@@ -892,6 +937,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 if (!handled) postStatus(lastError)
+                // The websocket pushes attention; the poll fallback must fetch it.
+                if (handled && lastGoodUrl.isNotBlank()) fetchAttention(current, lastGoodUrl)
             } catch (error: Exception) {
                 postStatus(error.message ?: "offline")
             } finally {
@@ -904,6 +951,25 @@ class MainActivity : ComponentActivity() {
                 }
                 handler.postDelayed({ pollOnce() }, 750)
             }
+        }
+    }
+
+    // Pull the attention list once over HTTP, for the poll fallback path. Called
+    // on the poll worker thread; hands results back to the UI thread.
+    private fun fetchAttention(current: Profile, baseUrl: String) {
+        try {
+            val connection = (URL("$baseUrl/api/attention").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("X-Airc-Auth", current.token)
+                connectTimeout = 2500
+                readTimeout = 6000
+            }
+            if (connection.responseCode !in 200..299) return
+            val payload = JSONObject(connection.inputStream.bufferedReader().readText())
+            val items = payload.optJSONArray("items")?.let { parseAttention(it) } ?: emptyList()
+            handler.post { applyAttention(items) }
+        } catch (_: Exception) {
+            // Transient; the next poll retries.
         }
     }
 
@@ -1072,6 +1138,9 @@ class MainActivity : ComponentActivity() {
             "hello" -> msg.optString("serverVersion").takeIf { it.isNotBlank() }?.let { serverVersion = it }
             "frame" -> msg.optJSONObject("frame")?.let { renderFrame(it) }
             "heartbeat" -> postStatus("idle")
+            "attention" -> msg.optJSONArray("items")?.let { arr ->
+                handler.post { applyAttention(parseAttention(arr)) }
+            }
             "error" -> postStatus(msg.optString("error", "error"))
         }
     }
@@ -1275,6 +1344,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun selectFollow(session: String) {
+        setAuto(false) // an explicit session choice is a manual override
         pinnedPane = ""
         followSession = session
         prefs().edit().putString("pinnedPane", "").putString("followSession", session).apply()
@@ -1284,12 +1354,101 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun selectPane(pane: Pane) {
-        pinnedPane = pane.paneId
-        followSession = pane.session
-        prefs().edit().putString("pinnedPane", pinnedPane).putString("followSession", pane.session).apply()
+        setAuto(false) // an explicit pane choice is a manual override
+        applyPin(pane.paneId, pane.session, "pin ${pane.label}")
+    }
+
+    // Pin the view to a pane without touching auto mode. Shared by the manual
+    // picker (via selectPane, which also disables auto) and auto-follow.
+    private fun applyPin(paneId: String, session: String, label: String) {
+        pinnedPane = paneId
+        followSession = session
+        prefs().edit().putString("pinnedPane", paneId).putString("followSession", session).apply()
         etag = null
         sendViewState()
-        paneButton.text = "pin ${pane.label}"
+        paneButton.text = label
+    }
+
+    private fun parseAttention(arr: org.json.JSONArray): List<AttentionItem> {
+        val out = mutableListOf<AttentionItem>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            out.add(
+                AttentionItem(
+                    paneId = o.optString("paneId"),
+                    session = o.optString("session"),
+                    windowName = o.optString("windowName"),
+                    paneIndex = o.optInt("paneIndex"),
+                    agent = o.optString("agent"),
+                    state = o.optString("state")
+                )
+            )
+        }
+        return out
+    }
+
+    // Fold a fresh attention list into the UI: render the chips and, if auto is
+    // on, follow the most urgent pane. Server already sorts urgent-first.
+    // Receiving any attention payload means the server has the feature enabled
+    // (it stays silent otherwise), so this is also where the auto button appears.
+    private fun applyAttention(items: List<AttentionItem>) {
+        if (!attentionEnabled) {
+            attentionEnabled = true
+            autoButton.visibility = View.VISIBLE
+            autoButton.applyButtonKind(if (autoMode) ButtonKind.Enter else ButtonKind.PaneInactive)
+        }
+        val json = items.joinToString("|") { "${it.paneId}:${it.state}" }
+        if (json == lastAttentionJson) {
+            applyAuto() // list unchanged, but auto may have just been toggled
+            return
+        }
+        lastAttentionJson = json
+        attentionItems = items
+        renderAttentionChips()
+        applyAuto()
+    }
+
+    private fun renderAttentionChips() {
+        alertsRow.removeAllViews()
+        for (item in attentionItems) {
+            val urgent = item.state == "waiting"
+            val mark = if (urgent) "● " else "○ "
+            val agent = item.agent.ifBlank { "agent" }
+            val chip = chromeButton(
+                "$mark$agent ${item.windowName}:${item.paneIndex}",
+                if (urgent) ButtonKind.Enter else ButtonKind.PaneInactive
+            ) {
+                selectPane(Pane(item.session, item.paneId, "${item.windowName}:${item.paneIndex}", false))
+            }
+            alertsRow.addView(chip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(30)).apply {
+                rightMargin = dp(6)
+            })
+        }
+        val show = attentionEnabled && attentionItems.isNotEmpty()
+        alertsRow.visibility = if (show) View.VISIBLE else View.GONE
+        alertsScroll.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    private fun toggleAuto() {
+        setAuto(!autoMode)
+    }
+
+    private fun setAuto(on: Boolean) {
+        if (autoMode == on) return
+        autoMode = on
+        prefs().edit().putBoolean("autoMode", on).apply()
+        autoButton.applyButtonKind(if (on) ButtonKind.Enter else ButtonKind.PaneInactive)
+        applyAuto()
+    }
+
+    // When auto is on, pin the most urgent flagged pane (the list head). Sticky:
+    // if nothing needs attention, hold the current view rather than jumping.
+    private fun applyAuto() {
+        if (!autoMode) return
+        val target = attentionItems.firstOrNull() ?: return
+        if (target.paneId != pinnedPane) {
+            applyPin(target.paneId, target.session, "pin ${target.windowName}:${target.paneIndex}")
+        }
     }
 
     private fun showPairDialog() {

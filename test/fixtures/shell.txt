@@ -1,0 +1,20 @@
+drwxr-xr-x@    - k 17 Jun 15:11 .codex
+.rw-r--r--@  418 k 18 Jun 11:41 config.example.json
+.rw-r--r--@ 2.0k k 18 Jun 12:19 Makefile
+.rw-r--r--@ 4.2k k 18 Jun 12:20 README.md
+.rw-r--r--@ 2.5k k 18 Jun 12:21 AGENTS.md
+drwxr-xr-x@    - k 19 Jun 09:54 docs
+.rw-------@  128 k 19 Jun 09:56 config.json
+drwxr-xr-x@    - k 21 Jun 15:23 .claude
+drwxr-xr-x@    - k 21 Jun 15:32 public
+.rw-r--r--@  427 k 21 Jun 15:36 package.json
+.rw-------@    7 k 21 Jun 15:38 .airc-server.pid
+.rw-------@   99 k 21 Jun 15:38 .airc-server.json
+drwxr-xr-x@    - k 22 Jun 08:43 src
+drwxr-xr-x@    - k 22 Jun 08:43 tools
+.rw-------@ 1.4M k 22 Jun 08:46 .airc-server.log
+drwxr-xr-x@    - k 22 Jun 08:50 .git
+
+k@musta ~/airc [harden-token-and-auth-security L|✔] % ls ../dais/ai
+glossary.md  gotchas.md  README.md  where-to-look.md
+k@musta ~/airc [master|✔] %

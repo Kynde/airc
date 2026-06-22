@@ -1,0 +1,21 @@
+  Track B — Keep building (deferred items from the plan):
+  - Admin editing UI for render-meta scalars (orientation/height/floor-count) — explicitly deferred to "its own
+  follow-up plan"; net-new since no per-building scalar editor exists.
+  - OSM footprint import automation (currently a manual runbook/skill step).
+  - Exact SE/FI layout via real floor plans + validating the Swedish lägenhetsnummer positional assumption.
+  - Map-grounded overview (context buildings) — needs the standalone-Three.js-vs-MapLibre decision first.
+  - Quick data audit of apartments.floor quality on target SE sites.
+
+  Let me ask which direction you want to take, since the rest of the work forks on it.
+
+● User declined to answer questions
+  ⎿  · The whole 3D feature is built but unmerged (14 local commits, no PRs). Which track should we drive next?
+     (Ship: open the PR train / Admin editing UI / OSM import automation / Floor-plan / SE layout accuracy)
+
+────────────────────────────────────────────────────────────────────────────────────── 3d-buildings-continued-work ──
+❯ 
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  BEDROCK Opus 4.8 🔮 | 🌿 feature/3d-buildings …2 📁 ~/code/lh/leanheat-app
+  █████░░░░░░░░░░░░░░░ 26% | ⏱️  7m 25s | 📊 ↑52.3K ↓3.1K | 💰 $0.1200 ($0.4944)
+  ← for agents
+

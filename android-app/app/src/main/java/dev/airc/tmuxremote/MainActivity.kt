@@ -68,9 +68,9 @@ data class Pane(
     val active: Boolean
 )
 
-// A pane whose agent needs interaction, as reported by the server's attention
-// scan / hooks. state is "waiting" (urgent: blocked on a prompt) or
-// "idle-input" (ambient: finished, awaiting the next instruction).
+// A pane with a notable agent state, as reported by the server's attention
+// scan / hooks. state is "waiting" (urgent: blocked on a prompt), "idle-input"
+// (ambient: finished, awaiting the next instruction), or "busy" (working).
 data class AttentionItem(
     val paneId: String,
     val session: String,
@@ -107,6 +107,7 @@ class MainActivity : ComponentActivity() {
         const val primaryText = 0xFF04240F.toInt()
         const val borderAlpha = 0x4D9EF56C.toInt()
         const val dimBorder = 0x666CC458.toInt()
+        const val amberBorder = 0x66EF9F27.toInt()
         const val wash = 0x1F9EF56C
         const val offlineFill = 0xFF140909.toInt()
         const val radiusDp = 6
@@ -408,7 +409,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private enum class ButtonKind {
-        Key, Primary, Enter, PaneActive, PaneInactive, IconAccent
+        Key, Primary, Enter, PaneActive, PaneInactive, IconAccent, Busy
     }
 
     private fun chromeButton(label: String, kind: ButtonKind = ButtonKind.Key, action: (View) -> Unit): Button {
@@ -452,6 +453,9 @@ class MainActivity : ComponentActivity() {
             ButtonKind.PaneActive -> arrayOf(Chrome.primaryText, Chrome.primary, Chrome.primary, Chrome.primary)
             ButtonKind.PaneInactive -> arrayOf(Chrome.primaryDim, Chrome.bg, Chrome.dimBorder, Chrome.wash)
             ButtonKind.IconAccent -> arrayOf(Chrome.accent, Chrome.surface, Color.TRANSPARENT, Chrome.wash)
+            // Busy: a third attention color (amber) for "working", distinct from
+            // the green "finished" and cyan "needs you" chips.
+            ButtonKind.Busy -> arrayOf(Chrome.amber, Chrome.bg, Chrome.amberBorder, Chrome.wash)
             ButtonKind.Key -> arrayOf(Chrome.primary, Chrome.bg, Chrome.borderAlpha, Chrome.wash)
         }
         setTextColor(textColor)
@@ -460,6 +464,8 @@ class MainActivity : ComponentActivity() {
             setShadowLayer(8f, 0f, 0f, Color.argb(150, 158, 245, 108))
         } else if (kind == ButtonKind.Enter || kind == ButtonKind.IconAccent) {
             setShadowLayer(6f, 0f, 0f, Color.argb(120, 22, 255, 255))
+        } else if (kind == ButtonKind.Busy) {
+            setShadowLayer(6f, 0f, 0f, Color.argb(110, 239, 159, 39))
         } else {
             setShadowLayer(4f, 0f, 0f, Color.argb(85, 158, 245, 108))
         }
@@ -1411,12 +1417,22 @@ class MainActivity : ComponentActivity() {
     private fun renderAttentionChips() {
         alertsRow.removeAllViews()
         for (item in attentionItems) {
-            val urgent = item.state == "waiting"
-            val mark = if (urgent) "● " else "○ "
+            // Three states, three styles: waiting (cyan ●, needs you), busy
+            // (amber ◐, working), finished (green ○, awaiting next instruction).
+            val mark = when (item.state) {
+                "waiting" -> "● "
+                "busy" -> "◐ "
+                else -> "○ "
+            }
+            val kind = when (item.state) {
+                "waiting" -> ButtonKind.Enter
+                "busy" -> ButtonKind.Busy
+                else -> ButtonKind.PaneInactive
+            }
             val agent = item.agent.ifBlank { "agent" }
             val chip = chromeButton(
                 "$mark$agent ${item.windowName}:${item.paneIndex}",
-                if (urgent) ButtonKind.Enter else ButtonKind.PaneInactive
+                kind
             ) {
                 selectPane(Pane(item.session, item.paneId, "${item.windowName}:${item.paneIndex}", false))
             }
@@ -1441,11 +1457,13 @@ class MainActivity : ComponentActivity() {
         applyAuto()
     }
 
-    // When auto is on, pin the most urgent flagged pane (the list head). Sticky:
-    // if nothing needs attention, hold the current view rather than jumping.
+    // When auto is on, pin the most urgent pane that needs a human (waiting,
+    // then finished). A merely-busy pane is shown but never followed — chasing
+    // whatever is working would make the view jumpy. Sticky: if nothing needs
+    // attention, hold the current view rather than jumping.
     private fun applyAuto() {
         if (!autoMode) return
-        val target = attentionItems.firstOrNull() ?: return
+        val target = attentionItems.firstOrNull { it.state != "busy" } ?: return
         if (target.paneId != pinnedPane) {
             applyPin(target.paneId, target.session, "pin ${target.windowName}:${target.paneIndex}")
         }

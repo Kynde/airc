@@ -121,6 +121,11 @@ body {
   border-color: var(--muted);
   color: var(--muted);
 }
+/* "busy" is informational: an agent is actively working — no action needed. */
+#alerts .chip.busy {
+  border-color: var(--c4);
+  color: var(--c4);
+}
 @keyframes pulse { 50% { opacity: 0.45; } }
 /* When auto mode is actively following a flagged pane, make the toggle glow. */
 #auto-toggle.armed {

@@ -1,16 +1,20 @@
 # Attention: follow the pane that needs you
 
 When several coding agents (Claude Code, Codex, Copilot CLI, …) run across tmux panes, airc
-can notice when one has stopped and needs you — blocked on a permission prompt,
-or finished and awaiting the next instruction — and surface it.
+can notice each one's state — blocked on a permission prompt, finished and
+awaiting the next instruction, or actively working — and surface it.
 
 Two ways it shows up in both clients:
 
-- **Attention chips** — a tap-to-switch chip per flagged pane. Urgent panes
-  (blocked on a prompt) pulse; "finished, awaiting input" panes are quieter.
-- **`auto` toggle** — when on, the view follows the most urgent flagged pane
-  automatically. It is *sticky*: when nothing is urgent it holds the current
-  pane rather than jumping around, and any manual pane/session pick turns it off.
+- **Attention chips** — a tap-to-switch chip per pane, in three colors:
+  *waiting* (needs you; pulses), *finished* (awaiting input; quiet), and
+  *working* (actively running; informational). Waiting chips sort first,
+  working last, so a busy agent never buries one that needs you.
+- **`auto` toggle** — when on, the view follows the most urgent pane that needs
+  a human (waiting, then finished) automatically. A merely *working* pane is
+  shown but never auto-followed — chasing whatever is running would be jumpy.
+  Auto is *sticky*: when nothing needs you it holds the current pane rather than
+  jumping around, and any manual pane/session pick turns it off.
 
 Switching is non-invasive: airc only mirrors panes, it never changes your real
 tmux focus, so auto-follow moves your *view*, not your terminal.
@@ -21,8 +25,8 @@ Two sources feed one per-pane attention state on the server:
 
 1. **Screen scan (zero-config).** A server-wide loop captures each non-shell
    pane (`tmux capture-pane -p`) and classifies it with per-agent recognizers in
-   [`src/detect.js`](../src/detect.js). States: `waiting` (urgent), `busy`
-   (ignored), `idle-input` (ambient), or none. Shells are skipped via
+   [`src/detect.js`](../src/detect.js). States: `waiting` (urgent), `idle-input`
+   (ambient), `busy` (working), or none. Shells are skipped via
    `#{pane_current_command}`. The scan runs only while at least one client is
    connected, so an idle server costs nothing.
 2. **Agent hooks (exact).** An agent can POST its own state to
@@ -81,12 +85,14 @@ alone — which is zero-config and needs no wiring.
 
 ## API
 
-- `GET /api/attention` (view token) — `{ ok, items: [...] }`, urgent-first then
-  oldest. Used by the HTTP-poll fallback; websocket clients get the same list
-  pushed as `{ type: "attention", items: [...] }`.
+- `GET /api/attention` (view token) — `{ ok, items: [...] }`, ranked
+  waiting → idle-input → busy, then oldest within a rank. Used by the HTTP-poll
+  fallback; websocket clients get the same list pushed as
+  `{ type: "attention", items: [...] }`.
 - `POST /api/agent/event` (control token) — `{ paneId, event }`.
 
-Each item: `{ paneId, session, windowName, paneIndex, agent, state, since, source }`.
+Each item: `{ paneId, session, windowName, paneIndex, agent, state, since, source }`,
+where `state` is `waiting`, `idle-input`, or `busy`.
 
 ## Adding another agent
 

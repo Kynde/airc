@@ -510,7 +510,10 @@
   // that way, so the head is the target. Returns undefined when nothing needs
   // attention — auto is then "sticky" and holds the current view.
   function autoTarget() {
-    return attentionList[0];
+    // Follow panes that need a human (waiting first, then finished). A merely
+    // busy pane is shown as a chip but never auto-followed — chasing whatever
+    // is working would make the view jumpy.
+    return attentionList.find((item) => item.state !== "busy");
   }
 
   function applyAuto() {
@@ -546,9 +549,13 @@
       const chip = document.createElement("button");
       chip.className = `chip ${item.state}`;
       const where = `${item.windowName}:${item.paneIndex}`;
-      const mark = item.state === "waiting" ? "● " : "○ ";
+      const mark = item.state === "waiting" ? "● " : item.state === "busy" ? "◐ " : "○ ";
       chip.textContent = `${mark}${item.agent || "agent"} ${where}`;
-      chip.title = item.state === "waiting" ? "needs interaction — tap to switch" : "finished — tap to switch";
+      chip.title = item.state === "waiting"
+        ? "needs interaction — tap to switch"
+        : item.state === "busy"
+        ? "working — tap to switch"
+        : "finished — tap to switch";
       chip.addEventListener("click", () => selectPane(item));
       el.alerts.appendChild(chip);
     }

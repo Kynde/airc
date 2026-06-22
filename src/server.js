@@ -444,13 +444,14 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     }
   }
 
-  // Panes needing interaction, urgent (waiting) first then oldest-waiting first,
-  // shaped for the wire. idle-input is included but ranks below waiting so the
-  // HUD can show "finished" panes without burying the urgent ones.
+  // Panes worth showing in the HUD, ranked: waiting (urgent) first, then
+  // finished/awaiting-input, then busy (actively working). Within a rank,
+  // oldest first. busy ranks last so a working agent never buries one that
+  // actually needs you; auto-follow ignores it (see autoTarget on the clients).
   function attentionItems() {
-    const rank = { [STATE.WAITING]: 0, [STATE.IDLE_INPUT]: 1 };
+    const rank = { [STATE.WAITING]: 0, [STATE.IDLE_INPUT]: 1, [STATE.BUSY]: 2 };
     return [...attention.entries()]
-      .filter(([, e]) => e.state === STATE.WAITING || e.state === STATE.IDLE_INPUT)
+      .filter(([, e]) => e.state === STATE.WAITING || e.state === STATE.IDLE_INPUT || e.state === STATE.BUSY)
       .map(([paneId, e]) => ({
         paneId,
         session: e.session,

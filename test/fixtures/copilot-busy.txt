@@ -1,0 +1,30 @@
+  ╭─╮╭─╮
+  ╰─╯╰─╯  Copilot v1.0.63 uses AI.
+  █ ▘▝ █  Check for mistakes.
+   ▔▔▔▔
+
+● Tip: /app
+  └ Prefer a visual workspace? Try out the GitHub Copilot desktop app
+    https://github.com/features/ai/github-app
+
+❯ Write a short haiku about tmux, then ssh, then vim, with brief pauses
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ~/airc [⎇ master]                                                                                  Session: 0 AIC used
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ○ Working esc cancel                                                                                           GPT-5.4
+

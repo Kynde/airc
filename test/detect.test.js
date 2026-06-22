@@ -19,6 +19,9 @@ const CASES = [
   { name: "codex-waiting", command: "codex", agent: "codex", state: STATE.WAITING },
   { name: "codex-busy", command: "codex", agent: "codex", state: STATE.BUSY },
   { name: "codex-idle", command: "codex", agent: "codex", state: STATE.IDLE_INPUT },
+  { name: "copilot-waiting", command: "copilot", agent: "copilot", state: STATE.WAITING },
+  { name: "copilot-busy", command: "copilot", agent: "copilot", state: STATE.BUSY },
+  { name: "copilot-idle", command: "copilot", agent: "copilot", state: STATE.IDLE_INPUT },
 ];
 
 for (const c of CASES) {
@@ -52,4 +55,21 @@ test("codex recognized without command hint", () => {
   const result = detectPaneState({ text: fixture("codex-busy"), command: "node" });
   assert.strictEqual(result.agent, "codex");
   assert.strictEqual(result.state, STATE.BUSY);
+});
+
+test("copilot recognized without command hint", () => {
+  const result = detectPaneState({ text: fixture("copilot-busy"), command: "node" });
+  assert.strictEqual(result.agent, "copilot");
+  assert.strictEqual(result.state, STATE.BUSY);
+});
+
+// Regression: Copilot's "❯ 1. Yes" approval menu also matches Claude's chrome,
+// so a waiting Copilot pane must still be claimed by the copilot detector
+// (which sits ahead of claude) even when the command hint can't disambiguate.
+test("copilot waiting not misattributed to claude", () => {
+  for (const command of ["copilot", "node"]) {
+    const result = detectPaneState({ text: fixture("copilot-waiting"), command });
+    assert.strictEqual(result.agent, "copilot", `agent with command=${command}`);
+    assert.strictEqual(result.state, STATE.WAITING, `state with command=${command}`);
+  }
 });

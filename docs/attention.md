@@ -1,6 +1,6 @@
 # Attention: follow the pane that needs you
 
-When several coding agents (Claude Code, Codex, …) run across tmux panes, airc
+When several coding agents (Claude Code, Codex, Copilot CLI, …) run across tmux panes, airc
 can notice when one has stopped and needs you — blocked on a permission prompt,
 or finished and awaiting the next instruction — and surface it.
 
@@ -73,6 +73,11 @@ input) at the snippet above with `event:"waiting"`, and the `Stop` hook at
 
 Set Codex's `notify` program to a script that maps its event to `waiting` when
 Codex is awaiting approval and POSTs as above.
+
+### Copilot CLI
+
+Copilot CLI has no notification/hook mechanism, so it relies on the screen scan
+alone — which is zero-config and needs no wiring.
 
 ## API
 

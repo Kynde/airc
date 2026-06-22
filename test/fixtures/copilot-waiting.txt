@@ -1,0 +1,30 @@
+  ╭─╮╭─╮
+  ╰─╯╰─╯  Copilot v1.0.63 uses AI.
+  █ ▘▝ █  Check for mistakes.
+   ▔▔▔▔
+
+● Tip: /model
+  └ Select AI model to use (use 'auto' to let Copilot pick automatically)
+
+❯ Run this exact shell command and nothing else: rm -rf /tmp/copilot-probe
+
+● Remove /tmp/copilot-probe (shell)
+  └ rm -rf /tmp/copilot-probe
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Remove /tmp/copilot-probe                                                                                            │
+│ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ rm -rf /tmp/copilot-probe                                                                                        │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│                                                                                                                      │
+│ Do you want to run this command?                                                                                     │
+│                                                                                                                      │
+│ ❯ 1. Yes                                                                                                             │
+│   2. Yes, and don't ask again for `rm` in this repo (~/airc)                                                         │
+│   3. No, and tell Copilot what to do differently (Esc to stop)                                                       │
+│                                                                                                                      │
+│ ↑/↓ to navigate · enter to select · esc to cancel                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

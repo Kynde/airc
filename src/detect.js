@@ -41,6 +41,21 @@ const CLAUDE_PROMPT = /^\s*❯\s*$/m;
 // Distinctive chrome for command-less identification (the model/footer lines).
 const CLAUDE_CHROME = /accept edits on|shift\+tab to cycle|❯\s+\d+\.\s/;
 
+// --- GitHub Copilot CLI ----------------------------------------------------
+// busy:    status footer "<spinner> Working   esc cancel"; the spinner glyph
+//          animates (○ ◎ ● ◉ …) so key on the stable "Working" + "esc cancel".
+// waiting: a boxed approval — "Do you want to run this command?" / "…allow
+//          this?" with a numbered "❯ 1. Yes" menu and an invariant
+//          "↑/↓ to navigate · enter to select · esc to cancel" footer.
+// idle:    the ready footer "/ commands · ? help" under an empty "❯" composer.
+// NOTE: Copilot's "❯ 1. Yes" menu also trips Claude's CLAUDE_CHROME, so this
+// detector must sit ahead of Claude in DETECTORS; the `copilot` foreground
+// command then routes it before the ambiguous chrome is ever consulted.
+const COPILOT_BUSY = /\bWorking\b\s+esc cancel/;
+const COPILOT_WAITING = /Do you want to (?:run|allow|apply|proceed)\b|↑\/↓ to navigate · enter to select/;
+const COPILOT_READY = /\/ commands · \? help/;
+const COPILOT_CHROME = /Copilot v\d|\bAIC used\b|\bWorking\s+esc cancel|↑\/↓ to navigate · enter to select/;
+
 // --- Codex -----------------------------------------------------------------
 // busy:    status footer "· Working ·" or the "esc to interrupt" hint.
 // waiting: approval prompt — "Press enter to confirm or esc to cancel" with a
@@ -52,6 +67,18 @@ const CODEX_READY = /·\s*Ready\s*·/;
 const CODEX_CHROME = /OpenAI Codex|·\s*(?:Ready|Working)\s*·/;
 
 const DETECTORS = [
+  {
+    // Ahead of Claude on purpose: Copilot's "❯ 1. Yes" approval menu matches
+    // CLAUDE_CHROME, so a command-routed Copilot pane must claim it first.
+    name: "copilot",
+    matches: ({ command, text }) => command === "copilot" || COPILOT_CHROME.test(text),
+    classify: ({ text }) => {
+      if (COPILOT_WAITING.test(text)) return STATE.WAITING;
+      if (COPILOT_BUSY.test(text)) return STATE.BUSY;
+      if (COPILOT_READY.test(text)) return STATE.IDLE_INPUT;
+      return STATE.NONE;
+    },
+  },
   {
     name: "claude",
     matches: ({ command, text }) => command === "claude" || CLAUDE_CHROME.test(text),

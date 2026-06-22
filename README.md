@@ -84,6 +84,10 @@ The app has:
 - QR or manual pairing
 - LAN/public endpoint fallback from one pairing payload
 
+<p align="center">
+  <img src="docs/airc_app.jpg" alt="Airc Android app in action" width="370" height="800">
+</p>
+
 ## Browser Viewer
 
 The browser viewer is the merged Swyd-style interface for Tesla, tablets, and
@@ -91,10 +95,6 @@ desktop browsers: active-pane following, pinning, theme, pause, font
 fit/manual sizing, and ETag polling. With a `viewToken` it is read-only. With a
 `controlToken` it also shows text, Up, Down, and Enter controls that target the
 currently viewed pane.
-
-For Samsung S23 portrait, a tmux size around `58x50` has worked well. Tmux
-window size is the main readability lever; the app then fits that grid into the
-available screen.
 
 <p align="center">
   <img src="docs/airc_ui_in_tesla.jpg" alt="Airc in action in a Tesla" width="800" height="600">

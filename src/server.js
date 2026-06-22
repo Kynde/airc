@@ -17,9 +17,23 @@ const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const RESIZE_MIN_INTERVAL_MS = 2000;
 const INPUT_LIMIT_BYTES = 16 * 1024;
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const AUTH_FAIL_LIMIT = 10; // wrong-token tries per window before a temporary block
+const AUTH_FAIL_WINDOW_MS = 60 * 1000;
+const AUTH_BLOCK_MS = 5 * 60 * 1000;
+const WS_PER_IP_LIMIT = 8; // concurrent websockets per client address
+
+// Mask token values before anything reaches the (persistent, possibly
+// world-readable) log: the `?k=<token>` query param and the `"token":"<token>"`
+// field in a pairing payload. The control token grants shell input, so it must
+// never be written to disk in cleartext.
+function redactSecrets(message) {
+  return String(message)
+    .replace(/([?&]k=)[^&\s"]+/g, "$1<redacted>")
+    .replace(/("token"\s*:\s*")[^"]+(")/g, "$1<redacted>$2");
+}
 
 function log(message) {
-  console.log(`${new Date().toISOString()} ${message}`);
+  console.log(`${new Date().toISOString()} ${redactSecrets(message)}`);
 }
 
 // The build the server is running, resolved once at startup (the "when started"
@@ -91,14 +105,6 @@ function clientAddress(request) {
     return forwarded.split(",")[0].trim();
   }
   return request.socket.remoteAddress || "unknown";
-}
-
-function isLocalDirect(request) {
-  if (request.headers["x-forwarded-for"]) {
-    return false;
-  }
-  const address = request.socket.remoteAddress;
-  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
 function readBatteryStatus() {
@@ -291,6 +297,37 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
   };
   const resizeState = { lastCols: 0, lastRows: 0, lastAt: 0 };
 
+  // Per-IP brute-force throttle for wrong-token requests, plus a cap on
+  // concurrent websockets. Note: clientAddress() ultimately trusts
+  // X-Forwarded-For from the fronting proxy (ngrok), so this raises the bar
+  // against naive guessing rather than being a hard ceiling against a client
+  // that forges the header.
+  const authFailures = new Map(); // ip -> { count, first, blockedUntil }
+  const wsCounts = new Map(); // ip -> active socket count
+
+  function rateLimited(ip) {
+    const entry = authFailures.get(ip);
+    return Boolean(entry && entry.blockedUntil && Date.now() < entry.blockedUntil);
+  }
+
+  function recordFailedAuth(ip) {
+    const now = Date.now();
+    let entry = authFailures.get(ip);
+    if (!entry || now - entry.first > AUTH_FAIL_WINDOW_MS) {
+      entry = { count: 0, first: now, blockedUntil: 0 };
+    }
+    entry.count += 1;
+    if (entry.count >= AUTH_FAIL_LIMIT) {
+      entry.blockedUntil = now + AUTH_BLOCK_MS;
+      log(`rate-limit: blocking ${ip} for ${AUTH_BLOCK_MS / 1000}s after ${entry.count} failed auth attempts`);
+    }
+    authFailures.set(ip, entry);
+  }
+
+  function clearFailedAuth(ip) {
+    authFailures.delete(ip);
+  }
+
   async function captureFrame({ requestedPane = "", requestedSession = "", cols = NaN, rows = NaN, viewerAddress = "" }) {
     let pinValid = true;
     let meta = null;
@@ -476,6 +513,22 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
     log(`${clientAddress(request)} ${request.method} ${url.pathname}`);
 
+    // Defense-in-depth headers on every response. `style-src 'unsafe-inline'`
+    // is required because captured truecolor spans carry inline `style=` color
+    // (no script can run from a style attribute). The diagnostic probe page is
+    // the only page with an inline <script>, so it gets a narrowly relaxed CSP.
+    const scriptSrc = url.pathname === "/probe" ? "'self' 'unsafe-inline'" : "'self'";
+    response.setHeader(
+      "Content-Security-Policy",
+      `default-src 'self'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
+    );
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("X-Frame-Options", "DENY");
+    response.setHeader("Referrer-Policy", "no-referrer");
+    if (request.headers["x-forwarded-proto"] === "https") {
+      response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+
     if (url.pathname === "/fonts/FiraCode-Regular.ttf") {
       sendFile(response, "fonts/FiraCode-Regular.ttf", "font/ttf", "public, max-age=31536000, immutable");
       return;
@@ -492,9 +545,25 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     const auth = authLevel(request, url, config);
     const authorized = auth.level !== "none";
     const canControl = auth.level === "control";
+    const ip = clientAddress(request);
 
+    // A wrong token from a throttled address is dropped before any work.
+    if (!authorized && auth.presented && rateLimited(ip)) {
+      notFound(response);
+      return;
+    }
+    if (!authorized && auth.presented) {
+      recordFailedAuth(ip);
+    } else if (authorized) {
+      clearFailedAuth(ip);
+    }
+
+    // /healthz now requires a token like every other endpoint; the local CLI
+    // authenticates its probe with the control token. This removes the previous
+    // reliance on the (proxy-spoofable) "no X-Forwarded-For + loopback peer"
+    // signal as an auth bypass.
     if (url.pathname === "/healthz") {
-      if (!isLocalDirect(request) && !authorized) {
+      if (!authorized) {
         notFound(response);
         return;
       }
@@ -599,9 +668,19 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       rejectUpgrade(socket);
       return;
     }
+    const ip = clientAddress(request);
     const auth = authLevel(request, url, config);
     if (auth.level === "none") {
+      if (auth.presented && !rateLimited(ip)) {
+        recordFailedAuth(ip);
+      }
       rejectUpgrade(socket);
+      return;
+    }
+    clearFailedAuth(ip);
+    if ((wsCounts.get(ip) || 0) >= WS_PER_IP_LIMIT) {
+      log(`ws-limit: rejecting upgrade from ${ip} (>= ${WS_PER_IP_LIMIT} open)`);
+      rejectUpgrade(socket, 400);
       return;
     }
     const key = request.headers["sec-websocket-key"];
@@ -617,6 +696,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       "\r\n",
     ].join("\r\n"));
     wsSockets.add(socket);
+    wsCounts.set(ip, (wsCounts.get(ip) || 0) + 1);
 
     const wsState = {
       buffer: Buffer.alloc(0),
@@ -703,16 +783,24 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       }
     });
 
-    socket.on("close", () => {
+    let cleaned = false;
+    function cleanup() {
+      if (cleaned) {
+        return;
+      }
+      cleaned = true;
       wsState.closed = true;
       wsSockets.delete(socket);
       clearInterval(timer);
-    });
-    socket.on("error", () => {
-      wsState.closed = true;
-      wsSockets.delete(socket);
-      clearInterval(timer);
-    });
+      const remaining = (wsCounts.get(ip) || 1) - 1;
+      if (remaining <= 0) {
+        wsCounts.delete(ip);
+      } else {
+        wsCounts.set(ip, remaining);
+      }
+    }
+    socket.on("close", cleanup);
+    socket.on("error", cleanup);
   });
 
   server.closeWebSockets = () => {
@@ -749,7 +837,10 @@ function main() {
     console.error(error.message);
     process.exit(1);
   }
-  const { config, flags } = loaded;
+  const { config, flags, warnings } = loaded;
+  for (const warning of warnings || []) {
+    log(`WARNING: ${warning}`);
+  }
 
   if (flags.help) {
     printHelp();

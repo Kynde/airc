@@ -58,8 +58,24 @@ function parseArgs(argv) {
   return args;
 }
 
+// 24 random bytes → 32 base64url chars. Tokens shorter than this over a public
+// endpoint are brute-forceable, so configured tokens below it are flagged.
+const MIN_TOKEN_LENGTH = 32;
+
 function generateToken() {
   return crypto.randomBytes(24).toString("base64url");
+}
+
+// Surface weak configured tokens at load time without ever printing the value.
+// Returns warning strings; the caller decides how to emit them.
+function tokenWarnings(config) {
+  const warnings = [];
+  for (const [name, value] of [["controlToken", config.controlToken], ["viewToken", config.viewToken]]) {
+    if (typeof value === "string" && value.length > 0 && value.length < MIN_TOKEN_LENGTH) {
+      warnings.push(`${name} is only ${value.length} chars; use >= ${MIN_TOKEN_LENGTH} (clear it in config.json to auto-generate a strong one)`);
+    }
+  }
+  return warnings;
 }
 
 // Accept a string, an array, or a mix and produce a de-duplicated, non-empty
@@ -124,10 +140,17 @@ function loadConfig(argv) {
     changed = true;
   }
   if (changed) {
-    fs.writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`);
+    // 0600: the file holds the control token, which grants shell input.
+    fs.writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`, { mode: 0o600 });
+  }
+  // Tighten perms even when we didn't rewrite (e.g. a pre-existing 0644 file).
+  try {
+    fs.chmodSync(configPath, 0o600);
+  } catch {
+    // Best effort; a read-only/owned-elsewhere config is not fatal.
   }
 
-  return { config, flags: args.flags, configPath };
+  return { config, flags: args.flags, configPath, warnings: tokenWarnings(config) };
 }
 
 function localLanAddresses(port) {
@@ -187,5 +210,6 @@ module.exports = {
   pairingPayload,
   localLanAddresses,
   publicBaseUrl,
+  tokenWarnings,
   DEFAULT_CONFIG_PATH,
 };

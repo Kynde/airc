@@ -82,7 +82,7 @@ function writeState(pid, serverArgs, config) {
     serverArgs,
     port: config.port,
     startedAt: new Date().toISOString(),
-  }, null, 2)}\n`);
+  }, null, 2)}\n`, { mode: 0o600 });
 }
 
 function readState() {
@@ -98,9 +98,11 @@ function activeConfig() {
   return load(state?.serverArgs || []);
 }
 
-async function healthz(port) {
+async function healthz(config) {
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+    const response = await fetch(`http://127.0.0.1:${config.port}/healthz`, {
+      headers: { "X-Airc-Auth": config.controlToken },
+    });
     if (!response.ok) {
       return null;
     }
@@ -150,12 +152,19 @@ async function cmdOn(extraArgs, mode = "on") {
   const config = load(serverArgs);
   const pid = activePid();
   if (pid) {
-    const health = await healthz(config.port);
+    const health = await healthz(config);
     console.log(`airc: already on (pid ${pid}${health?.session ? `, session: ${health.session}` : ""})`);
     return;
   }
 
-  const log = fs.openSync(LOG_FILE, "a");
+  // 0600: the server log can contain pairing output and is otherwise readable
+  // by any local user.
+  const log = fs.openSync(LOG_FILE, "a", 0o600);
+  try {
+    fs.chmodSync(LOG_FILE, 0o600);
+  } catch {
+    // Best effort on a pre-existing log.
+  }
   const child = spawn(process.execPath, [SERVER, ...serverArgs], {
     cwd: ROOT,
     detached: true,
@@ -172,7 +181,7 @@ async function cmdOn(extraArgs, mode = "on") {
       console.error(`airc: server exited early; see ${LOG_FILE}`);
       process.exit(1);
     }
-    health = await healthz(config.port);
+    health = await healthz(config);
     if (health && (!config.ngrok.enabled || health.ngrok.url)) {
       break;
     }
@@ -231,7 +240,7 @@ function cmdOff() {
 async function cmdStatus(json) {
   const config = activeConfig();
   const pid = activePid();
-  const health = pid ? await healthz(config.port) : null;
+  const health = pid ? await healthz(config) : null;
   if (json) {
     console.log(JSON.stringify({ active: Boolean(pid), pid, health, log: LOG_FILE }));
     process.exit(pid ? 0 : 1);
@@ -272,7 +281,7 @@ async function publicUrlFor(config) {
   if (!pid) {
     return "";
   }
-  const health = await healthz(config.port);
+  const health = await healthz(config);
   return health?.ngrok?.url || "";
 }
 

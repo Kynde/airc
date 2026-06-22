@@ -39,12 +39,12 @@ function presentedToken(request, url) {
 function authLevel(request, url, config) {
   const token = presentedToken(request, url);
   if (tokenEquals(token, config.controlToken || "")) {
-    return { level: "control", token };
+    return { level: "control", token, presented: token };
   }
   if (tokenEquals(token, config.viewToken || "")) {
-    return { level: "view", token };
+    return { level: "view", token, presented: token };
   }
-  return { level: "none", token: "" };
+  return { level: "none", token: "", presented: token };
 }
 
 function authCookie(token) {

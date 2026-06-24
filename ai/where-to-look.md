@@ -28,6 +28,7 @@ entrypoint (foreground) :: tools/airc-tmux # one-liner that execs `node src/serv
 
 frame rendering / polling / WS :: public/app.js # WebSocket preferred, HTTP poll fallback; token bootstrapped from `?k=` into localStorage then stripped from the URL bar
 browser view-state handshake :: public/app.js sendViewState + src/server.js wsState.viewReady # client must send `{type:"view"}` after WS open; server defers first frame until then to preserve pins
+auto-follow target / what disables auto :: public/app.js autoTarget+applyAuto+AUTO_RANK # sticky-by-urgency (waiting>busy>idle, NOT the server's chip order); selectChip keeps auto, picker + first keystroke drop it. Mirror of MainActivity.kt applyAuto/autoRank
 viewer markup :: public/index.html ; diagnostics page :: public/probe.html # probe is the only page with an inline <script>
 terminal color CSS :: public/app.css # fg-N/bg-N palette classes that ansi.js emits
 
@@ -35,6 +36,7 @@ terminal color CSS :: public/app.css # fg-N/bg-N palette classes that ansi.js em
 
 everything :: android-app/app/src/main/java/dev/airc/tmuxremote/MainActivity.kt # single big activity: WebView render, endpoint fallback, font controls, prefs
 endpoint fallback / LAN rediscovery :: .../MainActivity.kt endpointUrls + maybeRefreshLanUrls + maybePreferLan # lastGoodUrl first; refresh /api/config over tunnel; drop WS to let poll loop try LAN again
+auto-follow / attention chips :: .../MainActivity.kt applyAuto+autoRank+selectChip+input TextWatcher # mirror of public/app.js; sticky-by-urgency, chip-tap keeps auto, picker + first keystroke drop it
 QR pairing :: .../QrScanActivity.kt # camera scan → pairing payload
 app id / version :: android-app/app/build.gradle.kts # applicationId dev.airc.tmuxremote; versionName/versionCode are STATIC on purpose (never bump)
 

@@ -10,11 +10,16 @@ Two ways it shows up in both clients:
   *waiting* (needs you; pulses), *finished* (awaiting input; quiet), and
   *working* (actively running; informational). Waiting chips sort first,
   working last, so a busy agent never buries one that needs you.
-- **`auto` toggle** — when on, the view follows the most urgent pane that needs
-  a human (waiting, then finished) automatically. A merely *working* pane is
-  shown but never auto-followed — chasing whatever is running would be jumpy.
-  Auto is *sticky*: when nothing needs you it holds the current pane rather than
-  jumping around, and any manual pane/session pick turns it off.
+- **`auto` toggle** — when on, the view follows the most urgent pane by the
+  order *waiting* (asking you something) → *working* → *finished*. Auto is
+  *sticky by urgency*: it only moves to a pane strictly more urgent than the one
+  you're already watching, so parking on a running agent holds even as others
+  work or finish — only something more urgent (e.g. an agent that starts asking)
+  pulls you off. Tapping an attention chip nudges the view but keeps auto on;
+  what turns auto off is an explicit pick from the pane/session picker, or
+  typing into the input box (from the first keystroke, so it can't yank your
+  half-typed message to another pane). Note this follow order differs from the
+  chip-row order above, where *finished* sorts ahead of *working*.
 
 Switching is non-invasive: airc only mirrors panes, it never changes your real
 tmux focus, so auto-follow moves your *view*, not your terminal.

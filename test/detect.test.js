@@ -15,6 +15,7 @@ const fixture = (name) => fs.readFileSync(path.join(__dirname, "fixtures", `${na
 const CASES = [
   { name: "claude-waiting", command: "claude", agent: "claude", state: STATE.WAITING },
   { name: "claude-busy", command: "claude", agent: "claude", state: STATE.BUSY },
+  { name: "claude-busy-thinking", command: "claude", agent: "claude", state: STATE.BUSY },
   { name: "claude-idle", command: "claude", agent: "claude", state: STATE.IDLE_INPUT },
   { name: "codex-waiting", command: "codex", agent: "codex", state: STATE.WAITING },
   { name: "codex-busy", command: "codex", agent: "codex", state: STATE.BUSY },

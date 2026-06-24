@@ -16,7 +16,9 @@ import android.graphics.drawable.StateListDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
 import android.text.TextUtils
+import android.text.TextWatcher
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
@@ -365,6 +367,15 @@ class MainActivity : ComponentActivity() {
                     false
                 }
             }
+            // Typing is taking over: drop auto from the first character so it
+            // can't yank the view — and the half-typed message — to another pane.
+            addTextChangedListener(object : TextWatcher {
+                override fun afterTextChanged(s: Editable?) {
+                    if (autoMode && !s.isNullOrEmpty()) setAuto(false)
+                }
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            })
         }
         inputRow.addView(input, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
             rightMargin = dp(7)
@@ -1364,6 +1375,13 @@ class MainActivity : ComponentActivity() {
         applyPin(pane.paneId, pane.session, "pin ${pane.label}")
     }
 
+    // Tapping an attention chip nudges the view to that pane but, unlike the
+    // picker, does NOT disable auto — auto stays engaged and will still pull you
+    // to anything more urgent (e.g. an agent that starts asking a question).
+    private fun selectChip(pane: Pane) {
+        applyPin(pane.paneId, pane.session, "pin ${pane.label}")
+    }
+
     // Pin the view to a pane without touching auto mode. Shared by the manual
     // picker (via selectPane, which also disables auto) and auto-follow.
     private fun applyPin(paneId: String, session: String, label: String) {
@@ -1434,7 +1452,7 @@ class MainActivity : ComponentActivity() {
                 "$mark$agent ${item.windowName}:${item.paneIndex}",
                 kind
             ) {
-                selectPane(Pane(item.session, item.paneId, "${item.windowName}:${item.paneIndex}", false))
+                selectChip(Pane(item.session, item.paneId, "${item.windowName}:${item.paneIndex}", false))
             }
             alertsRow.addView(chip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(30)).apply {
                 rightMargin = dp(6)
@@ -1457,15 +1475,28 @@ class MainActivity : ComponentActivity() {
         applyAuto()
     }
 
-    // When auto is on, pin the most urgent pane that needs a human (waiting,
-    // then finished). A merely-busy pane is shown but never followed — chasing
-    // whatever is working would make the view jumpy. Sticky: if nothing needs
-    // attention, hold the current view rather than jumping.
+    // When auto is on, follow by urgency. A pane asking a question (waiting)
+    // outranks one actively working (busy), which outranks one finished and idle.
+    // Auto is sticky by urgency: it only moves to a pane strictly more urgent
+    // than the one you're already viewing, so tapping a running agent to watch
+    // it (or auto landing on one) holds — even as others work — until something
+    // more urgent appears, e.g. an agent asking a question. This follow order
+    // differs from the chip-row order the server sends (which trails idle ahead
+    // of busy), so auto picks its own target by rank. Ties keep server order.
+    private fun autoRank(state: String): Int = when (state) {
+        "waiting" -> 0
+        "busy" -> 1
+        "idle-input" -> 2
+        else -> 99
+    }
+
     private fun applyAuto() {
         if (!autoMode) return
-        val target = attentionItems.firstOrNull { it.state != "busy" } ?: return
-        if (target.paneId != pinnedPane) {
-            applyPin(target.paneId, target.session, "pin ${target.windowName}:${target.paneIndex}")
+        val best = attentionItems.minByOrNull { autoRank(it.state) } ?: return
+        val current = attentionItems.firstOrNull { it.paneId == pinnedPane }
+        if (current != null && autoRank(current.state) <= autoRank(best.state)) return
+        if (best.paneId != pinnedPane) {
+            applyPin(best.paneId, best.session, "pin ${best.windowName}:${best.paneIndex}")
         }
     }
 

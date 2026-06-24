@@ -32,10 +32,13 @@ const CONFIDENCE = Object.freeze({ waiting: 0.9, busy: 0.85, idleInput: 0.7 });
 // --- Claude Code -----------------------------------------------------------
 // busy:   spinner with a live elapsed-time + token counter, e.g.
 //           "✽ Beaming… (9m 3s · ↓ 42.7k tokens)"  /  "✶ Sock-hopping… (4s · ↓ 111 tokens)"
+//         Newer builds append a trailing clause after the count, e.g.
+//           "… (7m 50s · ↓ 29.8k tokens · still thinking with xhigh effort)",
+//         so the token counter is not anchored to the closing paren.
 //         (older builds showed "esc to interrupt"; kept as an alternative.)
 // waiting: a highlighted numbered menu line, e.g. "❯ 1. Yes, auto-accept edits".
 // idle:    an empty composer box — a line that is just the "❯" prompt arrow.
-const CLAUDE_BUSY = /\(\d+m?\s*\d*s\s*·[^)]*tokens?\)|esc to interrupt/;
+const CLAUDE_BUSY = /\(\d+m?\s*\d*s\s*·[^)]*tokens?\b|esc to interrupt/;
 const CLAUDE_MENU = /❯\s+\d+\.\s/;
 const CLAUDE_PROMPT = /^\s*❯\s*$/m;
 // Distinctive chrome for command-less identification (the model/footer lines).

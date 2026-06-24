@@ -505,15 +505,42 @@
     el.picker.hidden = true;
   }
 
-  // The pane auto mode should follow: the most urgent (waiting before
-  // idle-input, then oldest) flagged pane. The server already sorts the list
-  // that way, so the head is the target. Returns undefined when nothing needs
-  // attention — auto is then "sticky" and holds the current view.
+  // Tapping an attention chip nudges the view to that pane but, unlike the
+  // picker, does NOT disable auto — auto stays engaged and will still pull you
+  // to anything more urgent (e.g. an agent that starts asking a question).
+  function selectChip(pane) {
+    applyPin(pane);
+  }
+
+  // Urgency rank for auto-follow: a pane asking a question (waiting) outranks one
+  // actively working (busy), which outranks one that's finished and idle. Lower
+  // is more urgent. This is the follow order; it differs from the chip-row order
+  // the server sends (which trails idle ahead of busy), so auto picks its own
+  // target rather than trusting the head. Ties break on server order (oldest).
+  const AUTO_RANK = { waiting: 0, busy: 1, "idle-input": 2 };
+  const autoRank = (item) => (item && item.state in AUTO_RANK ? AUTO_RANK[item.state] : 99);
+
+  // The pane auto mode should follow. Auto is sticky by urgency: it only pulls
+  // you to a pane strictly more urgent than the one you're already viewing. So
+  // tapping a running agent to watch it (or auto landing on one) holds — even
+  // as other agents work — until something more urgent appears, e.g. an agent
+  // asking a question, which always wins. Without this it would hop between
+  // equally-busy panes and never let you settle. Returns undefined to hold.
   function autoTarget() {
-    // Follow panes that need a human (waiting first, then finished). A merely
-    // busy pane is shown as a chip but never auto-followed — chasing whatever
-    // is working would make the view jumpy.
-    return attentionList.find((item) => item.state !== "busy");
+    let best;
+    for (const item of attentionList) {
+      if (!best || autoRank(item) < autoRank(best)) {
+        best = item;
+      }
+    }
+    if (!best) {
+      return undefined;
+    }
+    const current = attentionList.find((item) => item.paneId === pinned);
+    if (current && autoRank(current) <= autoRank(best)) {
+      return undefined;
+    }
+    return best;
   }
 
   function applyAuto() {
@@ -521,7 +548,10 @@
       return;
     }
     const target = autoTarget();
-    el.autoToggle.classList.toggle("armed", Boolean(target));
+    // Glow while auto is engaged with the fleet — either moving to a target or
+    // holding on a pane that itself still has attention.
+    const holding = attentionList.some((item) => item.paneId === pinned);
+    el.autoToggle.classList.toggle("armed", Boolean(target) || holding);
     if (target && target.paneId !== pinned) {
       applyPin(target);
     }
@@ -556,7 +586,7 @@
         : item.state === "busy"
         ? "working — tap to switch"
         : "finished — tap to switch";
-      chip.addEventListener("click", () => selectPane(item));
+      chip.addEventListener("click", () => selectChip(item));
       el.alerts.appendChild(chip);
     }
     el.alerts.hidden = attentionList.length === 0;
@@ -664,6 +694,13 @@
     placeCursor();
   });
   el.controlSend.addEventListener("click", sendControlText);
+  // Typing is taking over: drop auto from the first character so it can't yank
+  // the view — and the half-typed message — to a different pane mid-sentence.
+  el.controlText.addEventListener("input", () => {
+    if (auto && el.controlText.value) {
+      setAuto(false);
+    }
+  });
   el.controlText.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();

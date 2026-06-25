@@ -40,7 +40,7 @@ optional add-ons for when you want more.
 You need **Node ≥ 20** and **tmux**. Nothing else.
 
 ```sh
-git clone https://github.com/<you>/airc.git
+git clone https://github.com/Kynde/airc.git
 cd airc
 npm install
 

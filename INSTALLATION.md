@@ -30,7 +30,7 @@ Optional, depending on how far you take it:
 ## Server setup
 
 ```sh
-git clone https://github.com/<you>/airc.git
+git clone https://github.com/Kynde/airc.git
 cd airc
 npm install
 ```

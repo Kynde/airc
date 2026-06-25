@@ -9,5 +9,7 @@ Read in this order when picking up the project:
 5. [Tesla Browser Findings](tesla-browser.md)
 6. [Future Work](future-work.md)
 
-The root [README](../README.md) stays short and operational. These docs keep
-the details that matter across coding sessions.
+The root [README](../README.md) stays short and welcoming;
+[INSTALLATION](../INSTALLATION.md) holds setup details (prerequisites, ngrok,
+building the app). These docs keep the deeper details that matter across coding
+sessions.

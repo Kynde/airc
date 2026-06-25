@@ -11,7 +11,7 @@ const DEFAULTS = {
   productName: "AI Remote Control",
   host: "127.0.0.1",
   port: 8080,
-  session: "swyd",
+  session: "main",
   pollMs: 700,
   pollIdleMaxMs: 2500,
   viewToken: "",
@@ -30,8 +30,11 @@ const DEFAULTS = {
     maxPanes: 24,
   },
   ngrok: {
-    enabled: true,
-    domain: "carrousel-value-recipient.ngrok-free.dev",
+    // Off by default: the zero-setup path is LAN/browser access, which needs no
+    // account. Set enabled:true (and a real domain) only after configuring ngrok
+    // for away-from-home access. See INSTALLATION.md.
+    enabled: false,
+    domain: "your-domain.ngrok-free.dev",
     binary: "ngrok",
     apiUrl: "http://127.0.0.1:4040",
   },

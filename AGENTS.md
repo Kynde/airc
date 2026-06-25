@@ -1,8 +1,8 @@
 # Agent Notes
 
-This repo contains a private AI remote control for viewing and controlling a
-laptop tmux session from Android or a browser. Prefer small, direct changes;
-this is personal tooling, not a public product.
+This repo is an AI remote control for viewing and controlling a laptop tmux
+session from a browser or Android. It's open-sourced under MIT but stays lean —
+prefer small, direct changes over framework-y abstractions.
 
 ## Start Here
 

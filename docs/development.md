@@ -12,9 +12,9 @@
 - `tools/airc`: background server wrapper
 - `android-app/`: native Kotlin Android client
 
-The browser viewer is the canonical Swyd-style terminal UI. The Android app
-renders terminal frames in a WebView and keeps controls native, while sharing
-the same server frame/input APIs.
+The browser viewer is the canonical terminal UI. The Android app renders
+terminal frames in a WebView and keeps controls native, while sharing the same
+server frame/input APIs.
 
 Runtime paths:
 

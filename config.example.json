@@ -2,7 +2,7 @@
   "productName": "AI Remote Control",
   "host": "127.0.0.1",
   "port": 8080,
-  "sessions": ["airc"],
+  "sessions": ["main"],
   "pollMs": 700,
   "pollIdleMaxMs": 2500,
   "viewToken": "",
@@ -17,8 +17,8 @@
     "maxPanes": 24
   },
   "ngrok": {
-    "enabled": true,
-    "domain": "carrousel-value-recipient.ngrok-free.dev",
+    "enabled": false,
+    "domain": "your-domain.ngrok-free.dev",
     "binary": "ngrok",
     "apiUrl": "http://127.0.0.1:4040"
   }

@@ -5,32 +5,28 @@
 The tmux session must already exist:
 
 ```sh
-tmux new -s airc
+tmux new -s main
 ```
 
-Start local same-WLAN mode:
+Start local same-WLAN mode (the default, no accounts needed):
 
 ```sh
-tools/airc local --session airc
+tools/airc local --session main
 tools/airc pair-app
 ```
 
-Start configured ngrok mode:
+Start configured ngrok mode (requires ngrok setup — see
+[INSTALLATION.md](../INSTALLATION.md#public-access-with-ngrok)):
 
 ```sh
-tools/airc on --session airc
+tools/airc on --session main
 tools/airc pair-web
 ```
 
-Start local LAN mode:
-
-```sh
-tools/airc local --session airc
-tools/airc pair-app
-```
-
 `tools/airc local` prepends `--host 0.0.0.0 --no-ngrok`. Use `tools/airc on`
-when the configured ngrok tunnel should be started by the server.
+when the configured ngrok tunnel should be started by the server; ngrok ships
+disabled (`ngrok.enabled: false`), so `on` is a no-tunnel local run until you
+enable and configure it.
 
 To serve **both** LAN and ngrok at once (so a phone uses a direct LAN connection
 at home and the tunnel away), the server must bind a non-loopback address while

@@ -1,6 +1,6 @@
 # Tesla Browser Findings
 
-Measurements came from in-car Swyd/Airc POC tests in June 2026.
+Measurements came from in-car Airc proof-of-concept tests in June 2026.
 
 ## Network
 

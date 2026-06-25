@@ -191,11 +191,17 @@ async function sendText(target, text) {
 
 const ALLOWED_KEYS = new Set(["Enter", "Up", "Down", "Left", "Right", "Tab", "Escape", "Space", "Backspace", "C-b", "C-c", "C-u", "C-w", "C-d", "C-l", "C-r"]);
 
+// tmux's send-keys uses its own special-key names; an unrecognized name is sent
+// as literal characters instead. "Backspace" is the intuitive name our clients
+// send, but tmux only knows it as "BSpace", so translate at the boundary.
+const TMUX_KEY_NAMES = { Backspace: "BSpace" };
+
 async function sendKey(target, key) {
   if (!ALLOWED_KEYS.has(key)) {
     return { ok: false, error: `unsupported key: ${key}` };
   }
-  const result = await run(["send-keys", "-t", target, key], 2500);
+  const tmuxKey = TMUX_KEY_NAMES[key] || key;
+  const result = await run(["send-keys", "-t", target, tmuxKey], 2500);
   return result.ok ? { ok: true, error: "" } : { ok: false, error: result.error };
 }
 

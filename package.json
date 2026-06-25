@@ -1,6 +1,6 @@
 {
   "name": "airc-tmux-remote",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "description": "Remote display and input for a tmux session, from a phone, tablet, or browser.",
   "license": "MIT",
   "scripts": {

@@ -712,12 +712,23 @@ class MainActivity : ComponentActivity() {
                 setPadding(0, dp(2), 0, 0)
             })
             addView(TextView(this@MainActivity).apply {
-                text = "build ${BuildConfig.GIT_DESCRIBE}"
+                text = "app build ${BuildConfig.GIT_DESCRIBE}"
                 typeface = monoTypeface
                 setTextColor(Chrome.muted)
                 textSize = 13f
                 setPadding(0, dp(16), 0, dp(4))
             })
+            // serverVersion is set from the WS `hello` and cleared on disconnect, so a
+            // non-blank value means we're connected — only then can we name the server build.
+            if (serverVersion.isNotBlank()) {
+                addView(TextView(this@MainActivity).apply {
+                    text = "server build $serverVersion"
+                    typeface = monoTypeface
+                    setTextColor(Chrome.muted)
+                    textSize = 13f
+                    setPadding(0, dp(2), 0, dp(4))
+                })
+            }
         }
         AlertDialog.Builder(this)
             .setView(body)
@@ -1233,6 +1244,9 @@ class MainActivity : ComponentActivity() {
         wsConnected = false
         wsConnecting = false
         ws = null
+        // Drop the server build we learned from `hello`; we no longer know what (or
+        // whether) we're talking to, so About/status stop reporting it until reconnect.
+        serverVersion = ""
     }
 
     private fun closeWebSocket() {

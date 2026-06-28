@@ -65,10 +65,12 @@ tools/airc pair-web
 | Key | Default | Meaning |
 |---|---|---|
 | `host` | `127.0.0.1` | Bind address. `0.0.0.0` exposes it on the LAN (what `local` sets). |
-| `port` | `8080` | HTTP port. |
+| `port` | `8080` | HTTP port (browsers). |
 | `sessions` | `["main"]` | tmux session name(s) to follow; supports `*`/`?` globs. |
 | `viewToken` / `controlToken` | auto-generated | View-only vs. can-type tokens. |
 | `theme` | `dark` | Initial browser theme. |
+| `tls.enabled` | `true` | Serve HTTPS for the app alongside HTTP — see [App over HTTPS](#app-over-https). |
+| `tls.port` | `8443` | HTTPS port the Android app connects to. |
 | `ngrok.enabled` | `false` | Start a tunnel? Off by default — see below. |
 | `ngrok.domain` | placeholder | Your reserved ngrok domain. |
 
@@ -154,6 +156,37 @@ The Android app stores both URL families from one pairing and fails over between
 them automatically. More detail in
 [docs/operations.md](docs/operations.md#app-usage).
 
+## App over HTTPS
+
+The Android app talks to the server over **HTTPS/WSS**, even on the LAN, so the
+control token and your keystrokes are encrypted on the local network. This is
+automatic and needs no setup:
+
+- On first run the server generates a long-lived self-signed certificate
+  (`.airc-tls-key.pem` / `.airc-tls-cert.pem` at the repo root, both `0600`, both
+  git-ignored) and serves HTTPS on `tls.port` (default `8443`) alongside the
+  plain HTTP port.
+- Browsers keep using plain HTTP — they can't accept a self-signed cert, and
+  that zero-install browser viewer is the point. Only the app uses HTTPS.
+- The certificate's fingerprint travels inside the pairing QR. The app **pins**
+  it (trust-on-first-use, anchored by the QR you scan in person), so it trusts
+  only your server — not any CA. The ngrok tunnel keeps its normal public
+  certificate; the app validates that against the system trust store as usual.
+
+> If `openssl` isn't installed, the server logs a warning and falls back to
+> HTTP-only — but the app then can't connect on the LAN. Install `openssl`
+> (it's usually already present) to use the app at home.
+
+**Re-pair when the certificate changes.** The app pins the exact certificate it
+was paired with, so **re-scan the QR** (`tools/airc pair-app`) if you:
+
+- reinstall the server or delete the `.airc-tls-*.pem` files (a new cert is
+  generated, so the old pin no longer matches), or
+- upgrade from an older app/server that paired before HTTPS existed.
+
+Until you re-pair, the app reaches the server over the ngrok tunnel (if enabled)
+but not directly on the LAN.
+
 ## Building the Android app
 
 The app is **optional** — the browser viewer needs none of this. There's no
@@ -192,7 +225,7 @@ notes.
 
 Once installed, open **Airc Tmux**, tap `pair`, and scan the QR from
 `tools/airc pair-app`. The app stores the profile, so you only re-pair when the
-server address or a token changes.
+server address, a token, or the [TLS certificate](#app-over-https) changes.
 
 ## Zsh completions
 

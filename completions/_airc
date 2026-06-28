@@ -21,6 +21,7 @@ _airc_server_args() {
     '*--tmux-target[tmux target (alias of --session)]:target:_airc_sessions' \
     '--config[path to config.json]:config file:_files' \
     '--no-ngrok[disable the ngrok tunnel]' \
+    '--no-tls[disable HTTPS; serve HTTP only]' \
     '--print-url[print the URL and exit]' \
     '--pair[print pairing info]' \
     '(-h --help)'{-h,--help}'[show help]'

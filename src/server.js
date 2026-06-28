@@ -5,6 +5,7 @@ const { execFileSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
+const https = require("node:https");
 const path = require("node:path");
 
 const { ansiToHtml } = require("./ansi");
@@ -289,7 +290,7 @@ async function resolveInputTarget(config, payload) {
   return { ok: false, error: "target must be active or pane" };
 }
 
-function makeServer(config, ngrokStatus, currentPublicUrl) {
+function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
   const startedAt = Date.now();
   const stats = {
     lastCaptureAt: 0,
@@ -706,7 +707,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     };
   }
 
-  const server = http.createServer((request, response) => {
+  function handleRequest(request, response) {
     const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
     log(`${clientAddress(request)} ${request.method} ${url.pathname}`);
 
@@ -841,7 +842,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
         notFound(response);
         return;
       }
-      sendJson(response, 200, pairingPayload(config, currentPublicUrl() || ""), extraHeaders);
+      sendJson(response, 200, pairingPayload(config, currentPublicUrl() || "", tlsMaterial), extraHeaders);
       return;
     }
     if (url.pathname === "/api/tmux/frame" && request.method === "GET") {
@@ -898,7 +899,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       return;
     }
     notFound(response);
-  });
+  }
   const wsSockets = new Set();
 
   // One server-wide attention scan loop. It self-gates on viewerCount() so an
@@ -913,7 +914,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     socket.destroy();
   }
 
-  server.on("upgrade", (request, socket) => {
+  function handleUpgrade(request, socket) {
     const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
     if (url.pathname !== "/api/tmux/ws") {
       rejectUpgrade(socket);
@@ -1069,16 +1070,59 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
     }
     socket.on("close", cleanup);
     socket.on("error", cleanup);
-  });
+  }
 
-  server.closeWebSockets = () => {
-    for (const socket of wsSockets) {
-      socket.destroy();
-    }
-    wsSockets.clear();
+  // Browsers keep the plain HTTP listener (they can't accept the self-signed
+  // cert). The app gets an HTTPS listener on config.tls.port when cert material
+  // is available; both share the identical request and upgrade handlers. By the
+  // time `upgrade` fires, Node has already terminated TLS, so the hand-rolled
+  // WS handshake operates on a plaintext socket exactly as over HTTP.
+  const httpServer = http.createServer(handleRequest);
+  httpServer.on("upgrade", handleUpgrade);
+  const tlsServer = tlsMaterial
+    ? https.createServer({ key: tlsMaterial.key, cert: tlsMaterial.cert }, handleRequest)
+    : null;
+  if (tlsServer) {
+    tlsServer.on("upgrade", handleUpgrade);
+  }
+
+  // Lifecycle facade so main() drives both listeners through one object.
+  return {
+    listen(port, host, callback) {
+      httpServer.listen(port, host, callback);
+      if (tlsServer) {
+        tlsServer.listen(config.tls.port, host, () => {
+          log(`airc tmux remote TLS listening on https://${host}:${config.tls.port}`);
+        });
+        // A TLS bind clash (e.g. port already in use) must not take down the
+        // working HTTP/browser path — log and keep serving HTTP only.
+        tlsServer.on("error", (error) => {
+          log(`WARNING: TLS listener error, serving HTTP only: ${error.message}`);
+        });
+      }
+    },
+    on(event, listener) {
+      httpServer.on(event, listener);
+    },
+    closeWebSockets() {
+      for (const socket of wsSockets) {
+        socket.destroy();
+      }
+      wsSockets.clear();
+    },
+    close(callback) {
+      if (tlsServer) {
+        tlsServer.close();
+      }
+      httpServer.close(callback);
+    },
+    closeIdleConnections() {
+      httpServer.closeIdleConnections();
+      if (tlsServer) {
+        tlsServer.closeIdleConnections();
+      }
+    },
   };
-
-  return server;
 }
 
 function printHelp() {
@@ -1092,6 +1136,7 @@ Options:
   --port PORT      port to listen on
   --config PATH    config file (default <repo>/config.json)
   --no-ngrok       do not start ngrok
+  --no-tls         do not serve HTTPS / generate a self-signed cert (HTTP only)
   --print-url      print the browser URL with token and exit
   --pair           print Android pairing JSON and exit
 `);
@@ -1105,7 +1150,7 @@ function main() {
     console.error(error.message);
     process.exit(1);
   }
-  const { config, flags, warnings } = loaded;
+  const { config, flags, warnings, tls } = loaded;
   for (const warning of warnings || []) {
     log(`WARNING: ${warning}`);
   }
@@ -1119,14 +1164,14 @@ function main() {
     return;
   }
   if (flags.pair) {
-    printPairing(pairingPayload(config));
+    printPairing(pairingPayload(config, "", tls));
     return;
   }
 
   let ngrok = null;
   let publicUrl = "";
   const ngrokStatus = () => (ngrok ? ngrok.status() : { running: false, url: "", uptimeMs: 0, restarts: 0, lastError: "" });
-  const server = makeServer(config, ngrokStatus, () => publicUrl);
+  const server = makeServer(config, ngrokStatus, () => publicUrl, tls);
 
   server.listen(config.port, config.host, () => {
     log(`airc tmux remote listening on http://${config.host}:${config.port} (sessions: ${config.sessions.join(", ")})`);
@@ -1134,11 +1179,11 @@ function main() {
       ngrok = startNgrok({ ...config.ngrok, port: config.port }, log, (url) => {
         publicUrl = url;
         log(`bookmark: ${bookmarkUrl(config, "view", publicUrl)}`);
-        log(`pairing: ${JSON.stringify(pairingPayload(config, publicUrl))}`);
+        log(`pairing: ${JSON.stringify(pairingPayload(config, publicUrl, tls))}`);
       });
     } else {
       log(`bookmark: ${bookmarkUrl(config, "view")}`);
-      log(`pairing: ${JSON.stringify(pairingPayload(config))}`);
+      log(`pairing: ${JSON.stringify(pairingPayload(config, "", tls))}`);
     }
   });
 

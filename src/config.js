@@ -1,11 +1,14 @@
 "use strict";
 
+const { execFileSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
 const DEFAULT_CONFIG_PATH = path.join(__dirname, "..", "config.json");
+const DEFAULT_TLS_KEY_PATH = path.join(__dirname, "..", ".airc-tls-key.pem");
+const DEFAULT_TLS_CERT_PATH = path.join(__dirname, "..", ".airc-tls-cert.pem");
 
 const DEFAULTS = {
   productName: "AI Remote Control",
@@ -38,6 +41,16 @@ const DEFAULTS = {
     binary: "ngrok",
     apiUrl: "http://127.0.0.1:4040",
   },
+  // A self-signed cert is generated on first run so the Android app can talk
+  // HTTPS/WSS over the LAN (pinned via the QR payload). Browsers keep using the
+  // plain HTTP port — they can't accept a self-signed cert. Self-disables if
+  // openssl is unavailable. Empty paths fall back to .airc-tls-{key,cert}.pem.
+  tls: {
+    enabled: true,
+    port: 8443,
+    keyPath: "",
+    certPath: "",
+  },
 };
 
 function parseArgs(argv) {
@@ -58,6 +71,8 @@ function parseArgs(argv) {
       index += 1;
     } else if (item === "--no-ngrok") {
       args.noNgrok = true;
+    } else if (item === "--no-tls") {
+      args.noTls = true;
     } else if (item === "--print-url") {
       args.flags.printUrl = true;
     } else if (item === "--pair") {
@@ -91,6 +106,52 @@ function tokenWarnings(config) {
   return warnings;
 }
 
+// Base64 of the cert's DER SHA-256 — the value the app pins. Computed from the
+// cert (never persisted) so it can't desync from what the server presents.
+function certFingerprint(certPem) {
+  const der = new crypto.X509Certificate(certPem).raw;
+  return crypto.createHash("sha256").update(der).digest("base64");
+}
+
+// Generate (once) and load the self-signed TLS key/cert. Mirrors the token
+// persistence below: generate on first run, reuse thereafter, lock to 0600.
+// Returns { key, cert, fingerprint } or null if disabled / openssl is missing.
+// Pushes any failure onto `warnings` rather than throwing — HTTP must keep
+// working on a box without openssl.
+function ensureTlsMaterials(config, warnings) {
+  if (!config.tls || !config.tls.enabled) {
+    return null;
+  }
+  const keyPath = config.tls.keyPath || DEFAULT_TLS_KEY_PATH;
+  const certPath = config.tls.certPath || DEFAULT_TLS_CERT_PATH;
+  try {
+    const haveKey = fs.existsSync(keyPath) && fs.statSync(keyPath).size > 0;
+    const haveCert = fs.existsSync(certPath) && fs.statSync(certPath).size > 0;
+    if (!haveKey || !haveCert) {
+      // SAN is a fixed placeholder: the app verifies by pinned fingerprint, not
+      // hostname, so the IP here is irrelevant and a fixed value survives DHCP
+      // changes without forcing a regen + re-pair. -nodes leaves the key
+      // unencrypted (the file is 0600); 10-year life since it's pinned, not CA-trusted.
+      execFileSync("openssl", [
+        "req", "-x509", "-newkey", "ec",
+        "-pkeyopt", "ec_paramgen_curve:P-256",
+        "-keyout", keyPath, "-out", certPath,
+        "-days", "3650", "-nodes",
+        "-subj", "/CN=airc-tmux-remote",
+        "-addext", "subjectAltName=IP:0.0.0.0",
+      ], { stdio: "pipe" });
+      fs.chmodSync(keyPath, 0o600);
+      fs.chmodSync(certPath, 0o600);
+    }
+    const key = fs.readFileSync(keyPath, "utf8");
+    const cert = fs.readFileSync(certPath, "utf8");
+    return { key, cert, fingerprint: certFingerprint(cert) };
+  } catch (error) {
+    warnings.push(`TLS disabled: could not generate/load self-signed cert (${error.message}); serving HTTP only`);
+    return null;
+  }
+}
+
 // Accept a string, an array, or a mix and produce a de-duplicated, non-empty
 // list of session names. Order is preserved; the first entry is the primary.
 function normalizeSessions(...sources) {
@@ -119,10 +180,12 @@ function loadConfig(argv) {
     ...fileConfig,
     ngrok: { ...DEFAULTS.ngrok, ...(fileConfig.ngrok || {}) },
     attention: { ...DEFAULTS.attention, ...(fileConfig.attention || {}) },
+    tls: { ...DEFAULTS.tls, ...(fileConfig.tls || {}) },
   };
   if (args.host !== undefined) config.host = args.host;
   if (args.port !== undefined) config.port = args.port;
   if (args.noNgrok) config.ngrok = { ...config.ngrok, enabled: false };
+  if (args.noTls) config.tls = { ...config.tls, enabled: false };
 
   // sessions[] is canonical, resolved by precedence (not merged): CLI --session
   // (repeatable) wins, else a file `sessions` array, else a legacy file `session`
@@ -164,7 +227,10 @@ function loadConfig(argv) {
     // Best effort; a read-only/owned-elsewhere config is not fatal.
   }
 
-  return { config, flags: args.flags, configPath, warnings: tokenWarnings(config) };
+  const warnings = tokenWarnings(config);
+  const tls = ensureTlsMaterials(config, warnings);
+
+  return { config, flags: args.flags, configPath, warnings, tls };
 }
 
 function localLanAddresses(port) {
@@ -201,7 +267,10 @@ function bookmarkUrl(config, level = "view", actualBaseUrl = "") {
   return `${publicBaseUrl(config, actualBaseUrl)}/?k=${token}`;
 }
 
-function pairingPayload(config, actualBaseUrl = "") {
+function pairingPayload(config, actualBaseUrl = "", tls = null) {
+  // lanUrls stay http:// — they're shared with the browser viewer, which can't
+  // use the self-signed cert. The app rewrites them to https://IP:tlsPort itself
+  // when certFingerprint is present (it pins by fingerprint, so the IP is fine).
   const lanUrls = localLanAddresses(config.port);
   const preferredBaseUrl = actualBaseUrl || (config.ngrok.enabled ? baseUrl(config) : (lanUrls[0] || baseUrl(config)));
   const sessions = config.sessions || [config.session];
@@ -215,6 +284,8 @@ function pairingPayload(config, actualBaseUrl = "") {
     sessions,
     lanUrls,
     publicUrl: publicBaseUrl(config, actualBaseUrl),
+    certFingerprint: tls ? tls.fingerprint : "",
+    tlsPort: tls ? config.tls.port : 0,
   };
 }
 

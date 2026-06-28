@@ -47,6 +47,7 @@ import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.HttpsURLConnection
 import kotlin.concurrent.thread
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -60,7 +61,11 @@ data class Profile(
     val token: String,
     val session: String,
     val publicUrl: String = "",
-    val lanUrls: List<String> = emptyList()
+    val lanUrls: List<String> = emptyList(),
+    // SHA-256 (base64) of the server's self-signed LAN cert, from the QR payload.
+    // When set, LAN traffic is upgraded to https/wss on tlsPort and pinned to this.
+    val certFingerprint: String = "",
+    val tlsPort: Int = 0
 )
 
 data class Pane(
@@ -151,9 +156,11 @@ class MainActivity : ComponentActivity() {
     @Volatile private var wsConnected = false
     @Volatile private var wsConnecting = false
     private var lastWsAttemptAt = 0L
-    private val httpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
-    }
+    // Pinning material for the active profile's cert (null when no fingerprint is
+    // paired). Rebuilt on pair/load; shared by the WebSocket client and the
+    // HttpsURLConnection sites so one config serves both LAN (pinned) and ngrok.
+    private var pinned: Pinning.Pinned? = null
+    private var httpClient: OkHttpClient = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
     private var lastGoodUrl: String = ""
     private var lastLanProbeAt: Long = 0
     private var lastConfigRefreshAt: Long = 0
@@ -184,6 +191,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         profile = loadProfile()
+        rebuildHttpClient()
         pinnedPane = prefs().getString("pinnedPane", "") ?: ""
         followSession = prefs().getString("followSession", "") ?: ""
         autoMode = prefs().getBoolean("autoMode", false)
@@ -204,6 +212,49 @@ class MainActivity : ComponentActivity() {
 
     private fun prefs() = getSharedPreferences("airc-tmux-remote", Context.MODE_PRIVATE)
 
+    // Recompute pinning from the active profile and rebuild the OkHttp client to
+    // match. Called after the profile is loaded and whenever it changes (pairing).
+    private fun rebuildHttpClient() {
+        pinned = Pinning.forFingerprint(profile?.certFingerprint ?: "")
+        val builder = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS)
+        pinned?.let { builder.sslSocketFactory(it.socketFactory, it.trustManager).hostnameVerifier(it.hostnameVerifier) }
+        httpClient = builder.build()
+    }
+
+    // Install the pinning trust manager on any HTTPS connection. ngrok (real CA)
+    // is left to validate normally because the pinned trust manager delegates to
+    // the platform default on a fingerprint mismatch; only the LAN cert is pinned.
+    private fun applyPinning(connection: HttpURLConnection) {
+        val pin = pinned ?: return
+        if (connection is HttpsURLConnection) {
+            connection.sslSocketFactory = pin.socketFactory
+            connection.hostnameVerifier = pin.hostnameVerifier
+        }
+    }
+
+    // When a cert is pinned, a LAN http://IP:httpPort URL is served over
+    // https://IP:tlsPort instead. lanUrls stay http on the wire (browser
+    // contract); the app rewrites at the point of use. Non-LAN URLs (ngrok,
+    // loopback) pass through untouched.
+    private fun secureLan(url: String): String {
+        val current = profile ?: return url
+        if (current.certFingerprint.isBlank() || current.tlsPort <= 0) return url
+        if (!url.startsWith("http://")) return url
+        return try {
+            val parsed = URL(url)
+            if (!isLanHost(parsed.host)) return url
+            "https://${parsed.host}:${current.tlsPort}"
+        } catch (e: Exception) {
+            url
+        }
+    }
+
+    private fun isLanHost(host: String): Boolean =
+        host.startsWith("10.") ||
+            host.startsWith("192.168.") ||
+            host.endsWith(".local") ||
+            Regex("^172\\.(1[6-9]|2\\d|3[0-1])\\.").containsMatchIn(host)
+
     private fun loadProfile(): Profile? {
         val prefs = prefs()
         val baseUrl = prefs.getString("baseUrl", "") ?: ""
@@ -215,7 +266,9 @@ class MainActivity : ComponentActivity() {
             token,
             prefs.getString("session", "") ?: "",
             prefs.getString("publicUrl", "") ?: "",
-            parseStoredUrls(prefs.getString("lanUrls", "[]") ?: "[]")
+            parseStoredUrls(prefs.getString("lanUrls", "[]") ?: "[]"),
+            prefs.getString("certFingerprint", "") ?: "",
+            prefs.getInt("tlsPort", 0)
         )
     }
 
@@ -228,10 +281,13 @@ class MainActivity : ComponentActivity() {
             .putString("session", profile!!.session)
             .putString("publicUrl", profile!!.publicUrl.trimEnd('/'))
             .putString("lanUrls", JSONArray(profile!!.lanUrls.map { it.trimEnd('/') }).toString())
+            .putString("certFingerprint", profile!!.certFingerprint)
+            .putInt("tlsPort", profile!!.tlsPort)
             .apply()
         etag = null
         lastGoodUrl = ""
         prefs().edit().remove("lastGoodUrl").apply()
+        rebuildHttpClient()
         closeWebSocket()
         setStatus("paired")
         startPolling()
@@ -933,6 +989,7 @@ class MainActivity : ComponentActivity() {
                             connectTimeout = 2500
                             readTimeout = 6000
                         }
+                        applyPinning(connection)
                         val code = connection.responseCode
                         if (code == 304) {
                             rememberEndpoint(baseUrl)
@@ -981,6 +1038,7 @@ class MainActivity : ComponentActivity() {
                 connectTimeout = 2500
                 readTimeout = 6000
             }
+            applyPinning(connection)
             if (connection.responseCode !in 200..299) return
             val payload = JSONObject(connection.inputStream.bufferedReader().readText())
             val items = payload.optJSONArray("items")?.let { parseAttention(it) } ?: emptyList()
@@ -1009,6 +1067,7 @@ class MainActivity : ComponentActivity() {
                     connectTimeout = 2500
                     readTimeout = 6000
                 }
+                applyPinning(connection)
                 if (connection.responseCode !in 200..299) return@thread
                 val payload = JSONObject(connection.inputStream.bufferedReader().readText())
                 val freshLan = jsonArrayToList(payload.optJSONArray("lanUrls"))
@@ -1053,7 +1112,9 @@ class MainActivity : ComponentActivity() {
         val now = System.currentTimeMillis()
         if (now - lastLanPreferAt < LAN_PREFER_MS) return
         lastLanPreferAt = now
-        val lan = current.lanUrls.map { it.trim().trimEnd('/') }.filter { it.isNotBlank() }
+        // Rewrite to https://IP:tlsPort when pinned — otherwise this LAN-return
+        // probe is plaintext and fails under usesCleartextTraffic=false.
+        val lan = current.lanUrls.map { secureLan(it.trim().trimEnd('/')) }.filter { it.isNotBlank() }
         if (BuildConfig.DEBUG) Log.i(TAG, "prefer-lan: route=$lastGoodUrl local=${isLocalEndpoint(lastGoodUrl)} ws=$wsConnected lan=$lan")
         // Only relevant while a websocket is up and the active route is the tunnel.
         if (!wsConnected || lastGoodUrl.isBlank() || isLocalEndpoint(lastGoodUrl)) return
@@ -1067,6 +1128,7 @@ class MainActivity : ComponentActivity() {
                         connectTimeout = 1500
                         readTimeout = 2500
                     }
+                    applyPinning(connection)
                     val code = connection.responseCode
                     connection.disconnect()
                     if (BuildConfig.DEBUG) Log.i(TAG, "prefer-lan probe $baseUrl -> HTTP $code")
@@ -1217,6 +1279,7 @@ class MainActivity : ComponentActivity() {
                             connectTimeout = 2500
                             readTimeout = 6000
                         }
+                        applyPinning(connection)
                         OutputStreamWriter(connection.outputStream, StandardCharsets.UTF_8).use { it.write(body) }
                         val code = connection.responseCode
                         if (code in 200..299) {
@@ -1289,6 +1352,7 @@ class MainActivity : ComponentActivity() {
                             connectTimeout = 2500
                             readTimeout = 6000
                         }
+                        applyPinning(connection)
                         val payload = JSONObject(connection.inputStream.bufferedReader().readText())
                         rememberEndpoint(baseUrl)
                         handler.post { showPaneDialog(buildPickerRows(payload)) }
@@ -1584,7 +1648,9 @@ class MainActivity : ComponentActivity() {
                 json.getString("token"),
                 json.optString("session", ""),
                 json.optString("publicUrl", configuredBaseUrl),
-                jsonArrayToList(lanUrls)
+                jsonArrayToList(lanUrls),
+                json.optString("certFingerprint", ""),
+                json.optInt("tlsPort", 0)
             )
         } else {
             val url = URL(trimmed)
@@ -1598,7 +1664,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun endpointUrls(current: Profile): List<String> {
-        val normalizedLan = current.lanUrls.map { it.trim().trimEnd('/') }.filter { it.isNotBlank() }
+        // LAN URLs arrive as http://; secureLan upgrades them to https://IP:tlsPort
+        // when a cert is pinned. lastGoodUrl is stored already-rewritten, so the
+        // membership check below stays consistent in the same scheme-space.
+        val normalizedLan = current.lanUrls.map { secureLan(it.trim().trimEnd('/')) }.filter { it.isNotBlank() }
         val normalizedLast = lastGoodUrl.trim().trimEnd('/')
         val now = System.currentTimeMillis()
         val shouldProbeLan = normalizedLan.isNotEmpty() &&

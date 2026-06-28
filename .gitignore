@@ -2,6 +2,8 @@ config.json
 .airc-server.pid
 .airc-server.json
 .airc-server.log
+.airc-tls-key.pem
+.airc-tls-cert.pem
 node_modules/
 android-app/.gradle/
 android-app/local.properties

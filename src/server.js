@@ -738,6 +738,34 @@ function makeServer(config, ngrokStatus, currentPublicUrl) {
       sendFile(response, "app.js", "text/javascript; charset=utf-8", "no-store");
       return;
     }
+    if (url.pathname === "/favicon.ico") {
+      sendFile(response, "favicon.ico", "image/x-icon", "public, max-age=31536000, immutable");
+      return;
+    }
+    if (url.pathname === "/site.webmanifest") {
+      sendFile(response, "site.webmanifest", "application/manifest+json; charset=utf-8", "no-store");
+      return;
+    }
+    if (url.pathname === "/icons/favicon-16x16.png") {
+      sendFile(response, "icons/favicon-16x16.png", "image/png", "public, max-age=31536000, immutable");
+      return;
+    }
+    if (url.pathname === "/icons/favicon-32x32.png") {
+      sendFile(response, "icons/favicon-32x32.png", "image/png", "public, max-age=31536000, immutable");
+      return;
+    }
+    if (url.pathname === "/icons/apple-touch-icon.png") {
+      sendFile(response, "icons/apple-touch-icon.png", "image/png", "public, max-age=31536000, immutable");
+      return;
+    }
+    if (url.pathname === "/icons/icon-192.png") {
+      sendFile(response, "icons/icon-192.png", "image/png", "public, max-age=31536000, immutable");
+      return;
+    }
+    if (url.pathname === "/icons/icon-512.png") {
+      sendFile(response, "icons/icon-512.png", "image/png", "public, max-age=31536000, immutable");
+      return;
+    }
 
     const auth = authLevel(request, url, config);
     const authorized = auth.level !== "none";

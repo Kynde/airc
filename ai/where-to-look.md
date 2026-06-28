@@ -30,6 +30,7 @@ frame rendering / polling / WS :: public/app.js # WebSocket preferred, HTTP poll
 browser view-state handshake :: public/app.js sendViewState + src/server.js wsState.viewReady # client must send `{type:"view"}` after WS open; server defers first frame until then to preserve pins
 auto-follow target / what disables auto :: public/app.js autoTarget+applyAuto+AUTO_RANK # sticky-by-urgency (waiting>busy>idle, NOT the server's chip order); selectChip keeps auto, picker + first keystroke drop it. Mirror of MainActivity.kt applyAuto/autoRank
 viewer markup :: public/index.html ; diagnostics page :: public/probe.html # probe is the only page with an inline <script>
+web favicons / homescreen icons :: public/favicon.ico + public/icons/ + public/site.webmanifest + src/server.js static asset routes # generated from Android airc_icon.png
 terminal color CSS :: public/app.css # fg-N/bg-N palette classes that ansi.js emits
 
 ## Android (android-app/)

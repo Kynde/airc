@@ -167,6 +167,26 @@ SDK/tooling assumptions:
 - JDK 17: `~/android/jdk-17`
 - `android-app/local.properties` is machine-local and ignored
 
+### Release APK signing
+
+`make release-apk` (run by the `/release` flow) assembles a signed
+`airc-<version>.apk` from `./gradlew assembleRelease`. Signing reads a
+git-ignored `android-app/keystore.properties`:
+
+```properties
+storeFile=airc-release.jks
+storePassword=…
+keyAlias=airc
+keyPassword=…
+```
+
+The keystore (`android-app/airc-release.jks`) and this file live only on the
+release machine and are **never committed** — `*.jks` and `keystore.properties`
+are git-ignored. Without them, `assembleRelease` falls back to the debug key
+(so a plain build still works), but `make release-apk` hard-fails rather than
+ship a debug-signed artifact. Keep a secure backup of the keystore: losing it
+means future APKs can't upgrade an installed copy in place.
+
 ## Agent Notes
 
 For fresh coding-agent contexts, also read `AGENTS.md`.

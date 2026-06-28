@@ -12,11 +12,17 @@ ADB         := $(HOME)/android/platform-tools/adb
 APP_ID      := dev.airc.tmuxremote
 
 APK     := $(ANDROID_DIR)/app/build/outputs/apk/debug/app-debug.apk
+RELEASE_APK := $(ANDROID_DIR)/app/build/outputs/apk/release/app-release.apk
 SOURCES := $(shell find $(ANDROID_DIR)/app/src -type f 2>/dev/null) \
            $(ANDROID_DIR)/app/build.gradle.kts \
            $(ANDROID_DIR)/build.gradle.kts \
            $(ANDROID_DIR)/settings.gradle.kts \
            $(ANDROID_DIR)/gradle.properties
+
+# Version-stamped name for the release artifact uploaded to GitHub, e.g.
+# airc-v1.7.0.apk. Mirrors BuildConfig.GIT_DESCRIBE baked into the build.
+VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo unknown)
+DIST_APK := airc-$(VERSION).apk
 
 .DEFAULT_GOAL := help
 
@@ -29,6 +35,15 @@ build: $(APK)
 # The actual file rule: gradle reruns whenever a source is newer than the APK.
 $(APK): $(SOURCES)
 	cd $(ANDROID_DIR) && $(GRADLEW) assembleDebug
+
+## release-apk: assemble the signed release APK as airc-<version>.apk (for GitHub releases)
+.PHONY: release-apk
+release-apk:
+	@test -f $(ANDROID_DIR)/keystore.properties || \
+		{ echo "error: $(ANDROID_DIR)/keystore.properties missing — release would be debug-signed"; exit 1; }
+	cd $(ANDROID_DIR) && $(GRADLEW) assembleRelease
+	cp $(RELEASE_APK) $(DIST_APK)
+	@echo "built $(DIST_APK)"
 
 ## push: build a fresh APK if needed, then install it on the connected device
 .PHONY: push install

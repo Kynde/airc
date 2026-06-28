@@ -1,5 +1,20 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
+}
+
+// Release signing config from a git-ignored android-app/keystore.properties:
+//   storeFile=airc-release.jks
+//   storePassword=...
+//   keyAlias=airc
+//   keyPassword=...
+// Absent (most checkouts, CI without secrets) -> release builds fall back to the
+// debug key, so `assembleRelease` still produces an installable APK; only the
+// official release artifact uploaded to GitHub is signed with the real key.
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
 }
 
 // `git describe` captured at configuration time and baked into BuildConfig so the
@@ -29,6 +44,25 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "GIT_DESCRIBE", "\"${gitDescribe()}\"")
+    }
+
+    signingConfigs {
+        if (keystoreProps.isNotEmpty()) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            // Use the real release key when keystore.properties is present;
+            // otherwise leave the default (debug) signing so the build still runs.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+        }
     }
 }
 

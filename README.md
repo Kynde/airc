@@ -132,8 +132,9 @@ A native client with a few comforts the browser can't easily match:
 - one pairing payload carries both LAN and public URLs, and the app fails over
   between them automatically
 
-There's no prebuilt APK yet — you build it once with the Android SDK. See
-**[INSTALLATION.md](INSTALLATION.md#building-the-android-app)**.
+Grab the signed APK from the [latest release](https://github.com/Kynde/airc/releases/latest)
+(`airc-<version>.apk`) and sideload it, or build it yourself with the Android
+SDK. See **[INSTALLATION.md](INSTALLATION.md#installing-the-android-app)**.
 
 <p align="center">
   <img src="docs/airc_app.jpg" alt="Airc Android app in action" width="320">

@@ -15,7 +15,8 @@ If the argument is missing or anything else, stop and ask which level.
 - The next version is computed by bumping the **latest tag**, NOT `package.json` — package.json may already be bumped ahead of the latest tag, so trusting it would skip a number.
 - `package.json` `version` is the **bare** number (`1.4.1`) and is dragged along to match the tag.
 - Android `versionName`/`versionCode` in `android-app/app/build.gradle.kts` are intentionally **static** — never bump them.
-- `gh release create` makes a **lightweight** tag; no APK is attached.
+- `gh release create` makes a **lightweight** tag.
+- A **signed release APK is attached** as `airc-<tag>.apk`, built *after* the tag is fetched back so `git describe` (baked into the APK at Gradle config time) stamps the clean tag. Signing needs the git-ignored `android-app/keystore.properties` + keystore on this machine; if it's missing, the build would silently fall back to the debug key, so the `make release-apk` target hard-fails instead.
 - `gh release create` creates the tag on the **remote only** — fetch it back afterward so the local tree has it, otherwise `git describe` (which both the server and the Android build use to report their build) keeps reporting the *previous* tag plus a commit count.
 - Changelog = `git log --reverse` subjects (oldest first) over `<latestTag>..HEAD`, with the `Update version from package.json` bump commit filtered out.
 
@@ -72,4 +73,12 @@ git fetch --tags origin
 git describe --tags    # should print exactly "$tag"
 ```
 
-**7. Report** the release URL that `gh` prints.
+**7. Build & attach the signed APK.** Only now that the tag is local does `git describe` stamp it cleanly into the build. `release-apk` aborts if the keystore is missing rather than shipping a debug-signed APK:
+```bash
+make release-apk                       # -> airc-$tag.apk (e.g. airc-v1.7.0.apk)
+gh release upload "$tag" "airc-$tag.apk"
+rm -f "airc-$tag.apk"                  # git-ignored, but don't leave it lying around
+```
+If the keystore is missing on this machine, `make release-apk` stops with an error — the release tag/notes are already published, so either restore the keystore and rerun these two commands, or note that this release has no APK.
+
+**8. Report** the release URL that `gh` prints.

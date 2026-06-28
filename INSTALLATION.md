@@ -11,7 +11,7 @@ app. For day-to-day running and troubleshooting, see
 - [Server setup](#server-setup)
 - [Public access with ngrok](#public-access-with-ngrok)
 - [LAN and tunnel at the same time](#lan-and-tunnel-at-the-same-time)
-- [Building the Android app](#building-the-android-app)
+- [Installing the Android app](#installing-the-android-app)
 - [Zsh completions](#zsh-completions)
 
 ## Prerequisites
@@ -25,7 +25,7 @@ For the server (the only thing you strictly need):
 Optional, depending on how far you take it:
 
 - **ngrok** — only for [public/away-from-home access](#public-access-with-ngrok).
-- **Android SDK + JDK 17** — only if you want to [build the Android app](#building-the-android-app).
+- **Android SDK + JDK 17** — only if you want to [build the Android app](#build-it-yourself) yourself; a prebuilt APK is on the [releases page](https://github.com/Kynde/airc/releases/latest).
 
 ## Server setup
 
@@ -187,10 +187,30 @@ was paired with, so **re-scan the QR** (`tools/airc pair-app`) if you:
 Until you re-pair, the app reaches the server over the ngrok tunnel (if enabled)
 but not directly on the LAN.
 
-## Building the Android app
+## Installing the Android app
 
-The app is **optional** — the browser viewer needs none of this. There's no
-prebuilt APK yet, so you build it once.
+The app is **optional** — the browser viewer needs none of this.
+
+### Sideload the prebuilt APK (easiest)
+
+Each release attaches a signed APK named `airc-<version>.apk`:
+
+1. On the phone, open the
+   [latest release](https://github.com/Kynde/airc/releases/latest) and download
+   `airc-<version>.apk`.
+2. Tap the downloaded file. Android will ask you to allow installing from this
+   source (Settings → *Install unknown apps* for your browser/file manager);
+   grant it once.
+3. Install, then open **Airc Tmux**, tap `pair`, and scan the QR from
+   `tools/airc pair-app`.
+
+The APK is signed with a stable release key, so later versions install straight
+over the top — no uninstall needed. (It's self-signed, not from the Play Store,
+so the first install shows the usual "unknown source" prompt.)
+
+### Build it yourself
+
+Prefer to build from source? You'll need the Android toolchain.
 
 Requirements:
 

@@ -4,6 +4,7 @@
   const LINE_HEIGHT = 1.25;
   const PAD = 8;
   const FONT_MIN = 7;
+  const MOBILE_FONT_MIN = 10;
   const FONT_MAX = 24;
   const el = {
     dot: document.getElementById("dot"),
@@ -12,6 +13,7 @@
     alerts: document.getElementById("alerts"),
     autoToggle: document.getElementById("auto-toggle"),
     dashboard: document.getElementById("dashboard"),
+    mobileMenuToggle: document.getElementById("mobile-menu-toggle"),
     paneLabel: document.getElementById("pane-label"),
     fontMinus: document.getElementById("font-minus"),
     fontPlus: document.getElementById("font-plus"),
@@ -25,6 +27,8 @@
     controlBar: document.getElementById("control-bar"),
     controlText: document.getElementById("control-text"),
     controlSend: document.getElementById("control-send"),
+    controlLeft: document.getElementById("control-left"),
+    controlRight: document.getElementById("control-right"),
     controlUp: document.getElementById("control-up"),
     controlDown: document.getElementById("control-down"),
     controlEnter: document.getElementById("control-enter"),
@@ -72,9 +76,30 @@
   let fallbackStarted = false;
   let followLeft = true;
   let followBottom = true;
+  let mobileMenuOpen = false;
+  const mobileMedia = window.matchMedia("(max-width: 720px), (pointer: coarse)");
+  let mobileView = mobileMedia.matches;
+
+  function applyMobileView() {
+    mobileView = mobileMedia.matches;
+    document.body.classList.toggle("mobile-view", mobileView);
+    if (!mobileView) {
+      mobileMenuOpen = false;
+      document.body.classList.remove("mobile-menu-open");
+      el.mobileMenuToggle.setAttribute("aria-expanded", "false");
+    }
+    applyFont();
+  }
+
+  function toggleMobileMenu() {
+    mobileMenuOpen = !mobileMenuOpen;
+    document.body.classList.toggle("mobile-menu-open", mobileMenuOpen);
+    el.mobileMenuToggle.setAttribute("aria-expanded", mobileMenuOpen ? "true" : "false");
+  }
 
   function applyTheme(theme) {
-    document.body.className = theme === "day" ? "theme-day" : "theme-dark";
+    document.body.classList.toggle("theme-day", theme === "day");
+    document.body.classList.toggle("theme-dark", theme !== "day");
     el.themeToggle.textContent = theme === "day" ? "dark" : "day";
   }
 
@@ -145,7 +170,8 @@
       size = fontMode === "manual" ? fontSize : cfg.fontSizeDefault;
     } else if (lastCols > 0 && lastRows > 0) {
       const area = availArea();
-      size = clamp(Math.min(area.w / (lastCols * chRatio), area.h / (lastRows * LINE_HEIGHT)), FONT_MIN, FONT_MAX);
+      const min = mobileView ? MOBILE_FONT_MIN : FONT_MIN;
+      size = clamp(Math.min(area.w / (lastCols * chRatio), area.h / (lastRows * LINE_HEIGHT)), min, FONT_MAX);
       size = Math.floor(size * 2) / 2;
     } else {
       size = cfg.fontSizeDefault;
@@ -232,6 +258,9 @@
   }
 
   function renderStatus(payload) {
+    if (payload.publicUrl) {
+      cfg.publicUrl = payload.publicUrl;
+    }
     const parts = [];
     if (payload.ngrok?.enabled) {
       if (payload.ngrok.running && (payload.publicUrl || payload.ngrok.url)) {
@@ -247,6 +276,45 @@
       parts.push(`build ${payload.serverVersion}`);
     }
     el.dashboard.innerHTML = parts.join(" · ");
+  }
+
+  function originOf(value) {
+    try {
+      return new URL(value, location.href).origin;
+    } catch {
+      return "";
+    }
+  }
+
+  function isLanHostname(hostname) {
+    return /^10\./.test(hostname) ||
+      /^192\.168\./.test(hostname) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname) ||
+      hostname.endsWith(".local");
+  }
+
+  function connectionLabel() {
+    const here = location.origin;
+    const host = location.hostname;
+    const lanOrigins = (cfg.lanUrls || []).map(originOf).filter(Boolean);
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
+      return "local";
+    }
+    if (lanOrigins.includes(here) || isLanHostname(host)) {
+      return "wlan";
+    }
+    if (originOf(cfg.publicUrl) === here || host.includes("ngrok")) {
+      return "ngrok";
+    }
+    return "net";
+  }
+
+  function connectedStateLabel(changeAge) {
+    if (!mobileView) {
+      return changeAge > 10000 ? `idle ${Math.round(changeAge / 1000)}s` : "live";
+    }
+    const route = connectionLabel();
+    return changeAge > 10000 ? `${route} ${Math.round(changeAge / 1000)}s` : route;
   }
 
   async function updateStatus() {
@@ -473,7 +541,7 @@
     }
     el.dot.classList.add("live");
     const changeAge = now - lastChangeAt;
-    el.state.textContent = changeAge > 10000 ? `idle ${Math.round(changeAge / 1000)}s` : "live";
+    el.state.textContent = connectedStateLabel(changeAge);
   }, 500);
 
   // Pin the view to a pane. Shared by the manual picker and auto mode; only the
@@ -641,6 +709,7 @@
   }
 
   el.paneLabel.addEventListener("click", openPicker);
+  el.mobileMenuToggle.addEventListener("click", toggleMobileMenu);
   el.pickerClose.addEventListener("click", () => { el.picker.hidden = true; });
   el.picker.addEventListener("click", (event) => {
     if (event.target === el.picker) {
@@ -707,6 +776,8 @@
       sendControlText();
     }
   });
+  el.controlLeft.addEventListener("click", () => sendControlKey("Left"));
+  el.controlRight.addEventListener("click", () => sendControlKey("Right"));
   el.controlUp.addEventListener("click", () => sendControlKey("Up"));
   el.controlDown.addEventListener("click", () => sendControlKey("Down"));
   el.controlEnter.addEventListener("click", () => sendControlKey("Enter"));
@@ -730,8 +801,14 @@
   el.termWrap.addEventListener("scroll", updateScrollFollow, { passive: true });
   window.addEventListener("resize", applyFont);
   window.addEventListener("resize", sendViewState);
+  if (mobileMedia.addEventListener) {
+    mobileMedia.addEventListener("change", applyMobileView);
+  } else {
+    mobileMedia.addListener(applyMobileView);
+  }
 
   async function start() {
+    applyMobileView();
     applyTheme(localStorage.getItem("airc_theme") || cfg.theme);
     try {
       const response = await fetch("/api/config", { cache: "no-store", headers: headers() });

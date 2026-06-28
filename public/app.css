@@ -48,6 +48,10 @@ body {
   color: var(--fg);
   font-family: "Airc Fira Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+body.mobile-view {
+  height: 100dvh;
+  overflow: hidden;
+}
 #strip {
   display: flex;
   align-items: center;
@@ -68,6 +72,9 @@ body {
   color: var(--fg);
   font: inherit;
   padding: 0 10px;
+}
+#mobile-menu-toggle {
+  display: none;
 }
 #strip button.active {
   border-color: var(--accent);
@@ -145,6 +152,7 @@ body {
   position: relative;
   flex: 1;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
   background: var(--term-bg);
   padding: 8px;
 }
@@ -187,6 +195,10 @@ body {
   color: var(--fg);
   font: inherit;
   padding: 0 10px;
+}
+#control-left,
+#control-right {
+  display: none;
 }
 #control-ctrl-wrap {
   position: relative;
@@ -306,4 +318,221 @@ body {
 #picker-list button.picker-pane {
   margin-left: 16px;
   width: calc(100% - 16px);
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  html,
+  body {
+    height: 100dvh;
+  }
+
+  body {
+    overflow: hidden;
+  }
+
+  #strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: calc(6px + env(safe-area-inset-top)) 6px 6px;
+    font-size: 12px;
+  }
+
+  #strip button {
+    min-height: 36px;
+    min-width: 44px;
+    padding: 0 8px;
+  }
+
+  #state {
+    order: 1;
+    min-width: 0;
+    max-width: 78px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #pane-label {
+    order: 3;
+    flex: 1 1 0;
+    min-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #strip .spacer,
+  #dashboard,
+  #note {
+    display: none;
+  }
+
+  #mobile-menu-toggle {
+    order: 4;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+
+  #font-minus,
+  #font-plus,
+  #font-fit,
+  #controls-toggle,
+  #theme-toggle,
+  #pause-toggle {
+    display: none;
+  }
+
+  body.mobile-menu-open #font-minus,
+  body.mobile-menu-open #font-plus,
+  body.mobile-menu-open #font-fit,
+  body.mobile-menu-open #controls-toggle:not([hidden]),
+  body.mobile-menu-open #theme-toggle,
+  body.mobile-menu-open #pause-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    order: 10;
+  }
+
+  #auto-toggle:not([hidden]) {
+    order: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+
+  body.mobile-menu-open #mobile-menu-toggle {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  body.mobile-menu-open #strip::after {
+    content: "";
+    order: 9;
+    flex: 0 0 100%;
+    height: 0;
+  }
+
+  #dot {
+    order: 0;
+  }
+
+  #alerts {
+    order: 20;
+    flex: 1 0 100%;
+    min-width: 0;
+    gap: 5px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+
+  #alerts::-webkit-scrollbar {
+    display: none;
+  }
+
+  #alerts .chip {
+    min-height: 28px;
+    border-radius: 6px;
+    font-size: 11px;
+    padding: 0 8px;
+  }
+
+  #term-wrap {
+    min-height: 0;
+    padding: 8px;
+    overscroll-behavior: contain;
+  }
+
+  #term {
+    min-width: max-content;
+  }
+
+  #control-bar {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 6px;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+  }
+
+  #control-bar[hidden] {
+    display: none;
+  }
+
+  #control-text {
+    grid-column: 1 / -2;
+    min-height: 40px;
+    font-size: 16px;
+  }
+
+  #control-send {
+    grid-column: -2 / -1;
+  }
+
+  #control-bar button {
+    min-width: 0;
+    min-height: 40px;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+
+  #control-ctrl-wrap {
+    min-width: 0;
+  }
+
+  #control-ctrl {
+    width: 100%;
+    min-width: 0;
+  }
+
+  #control-left,
+  #control-right {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #control-ctrl-menu {
+    right: auto;
+    left: 0;
+    bottom: calc(100% + 8px);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(64px, 1fr));
+    max-width: calc(100vw - 12px);
+  }
+
+  #control-ctrl-menu[hidden] {
+    display: none;
+  }
+
+  #picker {
+    align-items: flex-end;
+  }
+
+  #picker-box {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    max-height: 86dvh;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 8px 8px 0 0;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  #picker-list button,
+  #picker-close {
+    min-height: 44px;
+    margin-bottom: 6px;
+  }
+
+  #picker-list button.picker-pane {
+    margin-left: 8px;
+    width: calc(100% - 8px);
+  }
 }

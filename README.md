@@ -5,7 +5,7 @@
 <h1 align="center">Airc Tmux Remote</h1>
 
 <p align="center">
-  <em>Watch and steer your laptop's tmux session — and the AI coding agent running in it — from any phone, tablet, or car browser.</em>
+  <em>Watch and steer your laptop's tmux sessions — and the AI coding agent running in it — from any phone, tablet, or car browser.</em>
 </p>
 
 <p align="center">
@@ -18,13 +18,13 @@
 
 ---
 
-You start an AI coding agent — Claude Code, Codex, Copilot, whatever — in a tmux
+You start an AI coding agent - Claude Code, Codex, Copilot, whatever - in a tmux
 session and walk away. Airc lets you glance at what it's doing from the couch,
 and tap a few keys to nudge it along, without unlocking the laptop.
 
 It's a small Node server on your laptop that captures tmux panes, serves a live
 browser viewer, and accepts input only from clients holding a token. It's not
-tied to any one AI tool — if it runs in tmux, you can watch and drive it.
+tied to any one AI tool - if it runs in tmux, you can watch and drive it.
 
 **The browser is all you need.** A phone, tablet, or even a car browser opens
 the viewer over your LAN with zero accounts and zero install. The
@@ -32,10 +32,10 @@ the viewer over your LAN with zero accounts and zero install. The
 optional add-ons for when you want more.
 
 <p align="center">
-  <img src="docs/airc_ui_in_tesla.jpg" alt="Airc viewer running in a Tesla browser" width="760">
+  <img src="docs/airc_ui_in_tesla.jpg" alt="Airc viewer running in a Tesla browser" width="640">
 </p>
 
-## 60-Second Quick Start
+## Quick Start
 
 You need **Node ≥ 20** and **tmux**. Nothing else.
 
@@ -44,14 +44,14 @@ git clone https://github.com/Kynde/airc.git
 cd airc
 npm install
 
-tmux new -s main            # or attach to a session you already have
+tmux new                          # or attach to a session you already have
 
 tools/airc local --session main   # serve on your LAN
-tools/airc pair-web               # prints a QR + URL — open it on your phone
+tools/airc pair-web               # prints a QR + URL - open it on your phone
 ```
 
 Scan the QR (or open the printed URL) on any device on the same Wi-Fi, and the
-live terminal is in your hand. That's it.
+live terminal is in your hand.
 
 > **No tokens to configure.** On first run Airc generates strong `viewToken` and
 > `controlToken` values into `config.json` for you. `pair-web` hands out the
@@ -63,7 +63,7 @@ no third-party services involved.
 
 ## Clients
 
-Airc is a server with two interchangeable front-ends. **You only need the browser.**
+Airc is a server with two interchangeable front-ends.
 
 | Client | Setup | View | Control |
 |---|---|---|---|

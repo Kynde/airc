@@ -2,7 +2,7 @@
   "productName": "AI Remote Control",
   "host": "127.0.0.1",
   "port": 8080,
-  "sessions": ["main"],
+  "sessions": ["*"],
   "pollMs": 700,
   "pollIdleMaxMs": 2500,
   "viewToken": "",

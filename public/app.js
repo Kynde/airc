@@ -12,6 +12,7 @@
     note: document.getElementById("note"),
     alerts: document.getElementById("alerts"),
     autoToggle: document.getElementById("auto-toggle"),
+    windowToggle: document.getElementById("window-toggle"),
     dashboard: document.getElementById("dashboard"),
     mobileMenuToggle: document.getElementById("mobile-menu-toggle"),
     paneLabel: document.getElementById("pane-label"),
@@ -23,6 +24,7 @@
     pauseToggle: document.getElementById("pause-toggle"),
     termWrap: document.getElementById("term-wrap"),
     term: document.getElementById("term"),
+    termGrid: document.getElementById("term-grid"),
     cursor: document.getElementById("cursor"),
     controlBar: document.getElementById("control-bar"),
     controlText: document.getElementById("control-text"),
@@ -61,6 +63,14 @@
   let pinned = localStorage.getItem("airc_pin") || "";
   let followSession = localStorage.getItem("airc_session") || "";
   let currentSession = "";
+  // Window view: "pane" (one pane, the original mode) or "window" (the whole
+  // tmux window laid out as a grid). pinnedWindow is the @id being shown;
+  // inputPane is the pane keystrokes target (defaults to the active pane,
+  // overridable by clicking a pane). Both reset across reconnects from state.
+  let viewMode = localStorage.getItem("airc_view_mode") === "window" ? "window" : "pane";
+  let pinnedWindow = localStorage.getItem("airc_pin_window") || "";
+  let inputPane = "";
+  let windowFrame = null;
   let auto = localStorage.getItem("airc_auto") === "1";
   let attentionList = [];
   let fontMode = localStorage.getItem("airc_font_mode") || "auto";
@@ -164,21 +174,31 @@
     el.cursor.hidden = false;
   }
 
-  function applyFont() {
-    let size;
+  function currentFontSize() {
     if (fontMode === "manual" || cfg.resizeToViewport) {
-      size = fontMode === "manual" ? fontSize : cfg.fontSizeDefault;
-    } else if (lastCols > 0 && lastRows > 0) {
+      return fontMode === "manual" ? fontSize : cfg.fontSizeDefault;
+    }
+    if (lastCols > 0 && lastRows > 0) {
       const area = availArea();
       const min = mobileView ? MOBILE_FONT_MIN : FONT_MIN;
-      size = clamp(Math.min(area.w / (lastCols * chRatio), area.h / (lastRows * LINE_HEIGHT)), min, FONT_MAX);
-      size = Math.floor(size * 2) / 2;
-    } else {
-      size = cfg.fontSizeDefault;
+      const size = clamp(Math.min(area.w / (lastCols * chRatio), area.h / (lastRows * LINE_HEIGHT)), min, FONT_MAX);
+      return Math.floor(size * 2) / 2;
     }
-    el.term.style.fontSize = `${size}px`;
+    return cfg.fontSizeDefault;
+  }
+
+  function applyFont() {
+    const size = currentFontSize();
+    // In window mode lastCols/lastRows are the whole window's dimensions, so the
+    // same fit math sizes the grid to show every pane at once.
+    const container = viewMode === "window" ? el.termGrid : el.term;
+    container.style.fontSize = `${size}px`;
     el.fontFit.classList.toggle("active", fontMode === "auto" && !cfg.resizeToViewport);
-    placeCursor();
+    if (viewMode === "window") {
+      layoutWindow();
+    } else {
+      placeCursor();
+    }
     applyScrollFollow();
   }
 
@@ -219,6 +239,11 @@
   }
 
   function viewedTarget() {
+    if (viewMode === "window") {
+      // Window view follows tmux's active pane for input, but a click can pin a
+      // specific pane as the target (inputPane). Either way it's a concrete pane.
+      return inputPane ? { target: "pane", paneId: inputPane } : { target: "active", session: followSession };
+    }
     return pinned ? { target: "pane", paneId: pinned } : { target: "active", session: followSession };
   }
 
@@ -344,6 +369,18 @@
     if (followSession) {
       query.set("session", followSession);
     }
+    if (viewMode === "window") {
+      query.set("mode", "window");
+      if (pinnedWindow) {
+        query.set("window", pinnedWindow);
+      }
+      if (cfg.resizeToViewport) {
+        const cells = fitCells();
+        query.set("cols", String(cells.cols));
+        query.set("rows", String(cells.rows));
+      }
+      return query;
+    }
     if (pinned) {
       query.set("pane", pinned);
     } else if (cfg.resizeToViewport) {
@@ -390,6 +427,139 @@
     applyScrollFollow();
   }
 
+  // Position each pane cell on the character grid from its tmux coordinates and
+  // size, in px derived from the current font. Called on every frame and on any
+  // resize/font change. Cheap: it only writes inline styles on existing nodes,
+  // rebuilding children only when the pane set changes (see renderWindowFrame).
+  function layoutWindow() {
+    if (!windowFrame || viewMode !== "window") {
+      return;
+    }
+    const size = parseFloat(el.termGrid.style.fontSize) || cfg.fontSizeDefault;
+    const cellW = size * chRatio;
+    const cellH = size * LINE_HEIGHT;
+    el.termGrid.style.width = `${PAD * 2 + windowFrame.cols * cellW}px`;
+    el.termGrid.style.height = `${PAD * 2 + windowFrame.rows * cellH}px`;
+    for (const node of el.termGrid.children) {
+      const left = Number(node.dataset.left);
+      const top = Number(node.dataset.top);
+      node.style.left = `${PAD + left * cellW}px`;
+      node.style.top = `${PAD + top * cellH}px`;
+      node.style.width = `${Number(node.dataset.cols) * cellW}px`;
+      node.style.height = `${Number(node.dataset.rows) * cellH}px`;
+      const cur = node._cursorEl;
+      if (cur && !cur.hidden) {
+        cur.style.left = `${Number(cur.dataset.x) * cellW}px`;
+        cur.style.top = `${Number(cur.dataset.y) * cellH}px`;
+        cur.style.width = `${cellW}px`;
+        cur.style.height = `${cellH}px`;
+      }
+    }
+  }
+
+  // Decide which pane the keystrokes target. Honour an explicit click
+  // (inputPane) when that pane is still present; otherwise fall back to the
+  // pane tmux marks active, so a fresh window view types into the live pane.
+  function resolveInputPane(frame) {
+    if (inputPane && frame.panes.some((p) => p.paneId === inputPane)) {
+      return inputPane;
+    }
+    const active = frame.panes.find((p) => p.active);
+    return active ? active.paneId : (frame.panes[0] && frame.panes[0].paneId) || "";
+  }
+
+  function paneClasses(pane) {
+    let cls = "gpane";
+    if (pane.active) {
+      cls += " active";
+    }
+    if (pane.paneId === inputPane) {
+      cls += " target";
+    }
+    return cls;
+  }
+
+  function renderWindowFrame(frame) {
+    lastOkAt = Date.now();
+    misses = 0;
+    interval = cfg.pollMs;
+    if (!frame.ok) {
+      el.termGrid.replaceChildren();
+      el.termGrid.textContent = frame.error || "capture failed";
+      windowFrame = null;
+      return;
+    }
+    if (pinnedWindow && frame.pinValid === false) {
+      // The pinned window vanished; fall back to following the active window of
+      // its session, mirroring the single-pane pin-drop behaviour.
+      pinnedWindow = "";
+      localStorage.removeItem("airc_pin_window");
+      followSession = frame.session || "";
+      localStorage.setItem("airc_session", followSession);
+    }
+    windowFrame = frame;
+    currentSession = frame.session || "";
+    inputPane = resolveInputPane(frame);
+
+    // Rebuild the cell nodes only when the pane set changes (window switch,
+    // split added/removed); otherwise reuse nodes and just swap innerHTML so a
+    // steady window doesn't thrash the DOM every frame.
+    const ids = frame.panes.map((p) => p.paneId).join(",");
+    if (el.termGrid.dataset.ids !== ids) {
+      el.termGrid.dataset.ids = ids;
+      el.termGrid.replaceChildren();
+      for (const pane of frame.panes) {
+        const cell = document.createElement("pre");
+        cell.dataset.paneId = pane.paneId;
+        const cursor = document.createElement("div");
+        cursor.className = "gpane-cursor";
+        cursor.hidden = true;
+        cell._cursorEl = cursor;
+        cell.appendChild(cursor);
+        cell.addEventListener("click", () => selectInputPane(pane.paneId));
+        el.termGrid.appendChild(cell);
+      }
+    }
+
+    for (const cell of el.termGrid.children) {
+      const pane = frame.panes.find((p) => p.paneId === cell.dataset.paneId);
+      if (!pane) {
+        continue;
+      }
+      cell.className = paneClasses(pane);
+      cell.dataset.left = pane.left;
+      cell.dataset.top = pane.top;
+      cell.dataset.cols = pane.cols;
+      cell.dataset.rows = pane.rows;
+      // innerHTML carries server-rendered SGR spans; the cursor node is appended
+      // after so it survives the content swap.
+      const cursor = cell._cursorEl;
+      cell.innerHTML = pane.html;
+      cell.appendChild(cursor);
+      const showCursor = !paused && pane.paneId === inputPane && pane.cursor;
+      cursor.hidden = !showCursor;
+      if (showCursor) {
+        cursor.dataset.x = pane.cursor.x;
+        cursor.dataset.y = pane.cursor.y;
+      }
+    }
+
+    el.paneLabel.textContent = frame.pinned
+      ? `win ${frame.session} ${frame.windowName}`
+      : `${frame.session} ${frame.windowName} (win)`;
+
+    if (frame.cols !== lastCols || frame.rows !== lastRows) {
+      lastCols = frame.cols;
+      lastRows = frame.rows;
+      applyFont();
+    } else {
+      layoutWindow();
+    }
+    lastChangeAt = Date.now();
+    applyAuto();
+    applyScrollFollow();
+  }
+
   function websocketUrl() {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const query = new URLSearchParams();
@@ -401,6 +571,18 @@
 
   function sendViewState() {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    if (viewMode === "window") {
+      const cells = cfg.resizeToViewport ? fitCells() : {};
+      ws.send(JSON.stringify({
+        type: "view",
+        mode: "window",
+        window: pinnedWindow,
+        session: followSession,
+        cols: cells.cols,
+        rows: cells.rows,
+      }));
       return;
     }
     const cells = cfg.resizeToViewport && !pinned ? fitCells() : {};
@@ -444,7 +626,7 @@
         const payload = JSON.parse(event.data);
         if (payload.type === "frame") {
           if (!paused) {
-            renderFrame(payload.frame);
+            dispatchFrame(payload.frame);
           }
         } else if (payload.type === "heartbeat") {
           lastOkAt = Date.now();
@@ -484,7 +666,19 @@
       throw new Error(`HTTP ${response.status}`);
     }
     etag = response.headers.get("ETag");
-    renderFrame(await response.json());
+    dispatchFrame(await response.json());
+  }
+
+  // Route a frame to the right renderer by its shape. The server tags window
+  // frames with mode:"window"; anything else is a single pane. Guarding on shape
+  // (not just current viewMode) means a frame that arrives just after a mode
+  // toggle can't be fed to the wrong renderer.
+  function dispatchFrame(frame) {
+    if (frame && frame.mode === "window") {
+      renderWindowFrame(frame);
+    } else {
+      renderFrame(frame);
+    }
   }
 
   // Attention reaches WebSocket clients in the frame stream. The HTTP-poll
@@ -544,6 +738,34 @@
     el.state.textContent = connectedStateLabel(changeAge);
   }, 500);
 
+  // Show or hide the single-pane vs. window-grid containers and label the mode
+  // toggle. Switching mode resets the per-mode dimension cache so applyFont
+  // refits against the new content (one pane vs. a whole window).
+  function applyViewMode() {
+    const isWindow = viewMode === "window";
+    el.term.hidden = isWindow;
+    el.termGrid.hidden = !isWindow;
+    el.cursor.hidden = isWindow || el.cursor.hidden;
+    el.windowToggle.classList.toggle("active", isWindow);
+    el.windowToggle.textContent = isWindow ? "win on" : "win";
+    lastCols = 0;
+    lastRows = 0;
+    applyFont();
+  }
+
+  function setViewMode(mode) {
+    const next = mode === "window" ? "window" : "pane";
+    if (next === viewMode) {
+      return;
+    }
+    viewMode = next;
+    localStorage.setItem("airc_view_mode", viewMode);
+    etag = null;
+    windowFrame = null;
+    applyViewMode();
+    sendViewState();
+  }
+
   // Pin the view to a pane. Shared by the manual picker and auto mode; only the
   // manual path disables auto (see selectPane), so an auto-driven pin doesn't
   // turn auto off.
@@ -554,6 +776,27 @@
     localStorage.setItem("airc_session", followSession);
     etag = null;
     sendViewState();
+  }
+
+  // Pin the window view to a specific window (@id). The session is remembered so
+  // a vanished window falls back to following that session's active window.
+  function applyWindowPin(windowId, session) {
+    pinnedWindow = windowId;
+    localStorage.setItem("airc_pin_window", windowId);
+    followSession = session || "";
+    localStorage.setItem("airc_session", followSession);
+    etag = null;
+    sendViewState();
+  }
+
+  // Click-to-target inside the window grid: redirect keystrokes to the clicked
+  // pane. Re-renders the current frame so the accent ring moves immediately
+  // rather than waiting for the next poll.
+  function selectInputPane(paneId) {
+    inputPane = paneId;
+    if (windowFrame) {
+      renderWindowFrame(windowFrame);
+    }
   }
 
   function selectFollow(session) {
@@ -570,6 +813,21 @@
   function selectPane(pane) {
     setAuto(false); // an explicit pane choice is a manual override
     applyPin(pane);
+    el.picker.hidden = true;
+  }
+
+  // Picking a window from the list switches into window mode and pins that
+  // window. inputPane resets so the new window types into its active pane until
+  // the user clicks a specific one.
+  function selectWindow(windowId, session) {
+    setAuto(false); // an explicit window choice is a manual override
+    inputPane = "";
+    if (viewMode !== "window") {
+      viewMode = "window";
+      localStorage.setItem("airc_view_mode", "window");
+      applyViewMode();
+    }
+    applyWindowPin(windowId, session);
     el.picker.hidden = true;
   }
 
@@ -594,7 +852,10 @@
   // as other agents work — until something more urgent appears, e.g. an agent
   // asking a question, which always wins. Without this it would hop between
   // equally-busy panes and never let you settle. Returns undefined to hold.
-  function autoTarget() {
+  // The pane auto should follow. `currentPaneId` is what's being watched now —
+  // the pinned pane in pane mode, the focused pane in window mode — so the
+  // sticky-by-urgency comparison holds in either view. Returns undefined to hold.
+  function autoTarget(currentPaneId) {
     let best;
     for (const item of attentionList) {
       if (!best || autoRank(item) < autoRank(best)) {
@@ -604,7 +865,7 @@
     if (!best) {
       return undefined;
     }
-    const current = attentionList.find((item) => item.paneId === pinned);
+    const current = attentionList.find((item) => item.paneId === currentPaneId);
     if (current && autoRank(current) <= autoRank(best)) {
       return undefined;
     }
@@ -615,13 +876,40 @@
     if (!auto) {
       return;
     }
-    const target = autoTarget();
+    if (viewMode === "window") {
+      applyAutoWindow();
+      return;
+    }
+    const target = autoTarget(pinned);
     // Glow while auto is engaged with the fleet — either moving to a target or
     // holding on a pane that itself still has attention.
     const holding = attentionList.some((item) => item.paneId === pinned);
     el.autoToggle.classList.toggle("armed", Boolean(target) || holding);
     if (target && target.paneId !== pinned) {
       applyPin(target);
+    }
+  }
+
+  // Window-mode auto: switch the viewed window to the most-urgent flagged pane's
+  // window and focus that pane (so keystrokes land on the agent that needs you).
+  // This is the two-agents-in-one-window case — auto can move focus between
+  // panes of the same window without a window switch. Sticky by urgency against
+  // the currently focused pane, same as pane mode.
+  function applyAutoWindow() {
+    const target = autoTarget(inputPane);
+    const holding = attentionList.some((item) => item.paneId === inputPane);
+    el.autoToggle.classList.toggle("armed", Boolean(target) || holding);
+    if (!target || target.paneId === inputPane) {
+      return;
+    }
+    inputPane = target.paneId;
+    if (target.windowId && target.windowId !== (windowFrame && windowFrame.windowId)) {
+      // Different window: pin it. The next frame renders the new window and
+      // resolveInputPane keeps inputPane as the target since it's present there.
+      applyWindowPin(target.windowId, target.session);
+    } else if (windowFrame) {
+      // Same window, different pane: just move the target ring/cursor now.
+      renderWindowFrame(windowFrame);
     }
   }
 
@@ -689,20 +977,42 @@
       header.textContent = session;
       // The session header follows that session's active pane. Highlight the
       // explicitly-followed session, or the one currently shown if none chosen.
-      const followingThis = pinned === "" &&
+      const followingThis = pinned === "" && pinnedWindow === "" &&
         (followSession ? followSession === session : currentSession === session);
       header.classList.toggle("selected", followingThis);
       header.addEventListener("click", () => selectFollow(session));
       el.pickerList.appendChild(header);
 
+      // Within a session, group panes by their window so a window-header row can
+      // sit above its panes. A multi-pane window's header pins the whole window
+      // (window mode); each pane row still pins that single pane (pane mode).
+      const byWindow = new Map();
       for (const pane of bySession.get(session) || []) {
-        const button = document.createElement("button");
-        button.className = "picker-pane";
-        const title = pane.paneTitle && pane.paneTitle !== pane.windowName ? ` - ${pane.paneTitle}` : "";
-        button.textContent = `${pane.active ? "* " : ""}${pane.windowIndex}:${pane.windowName}.${pane.paneIndex}${title} (${pane.width}x${pane.height})`;
-        button.classList.toggle("selected", pinned === pane.paneId);
-        button.addEventListener("click", () => selectPane(pane));
-        el.pickerList.appendChild(button);
+        if (!byWindow.has(pane.windowId)) {
+          byWindow.set(pane.windowId, []);
+        }
+        byWindow.get(pane.windowId).push(pane);
+      }
+
+      for (const [windowId, panes] of byWindow) {
+        const first = panes[0];
+        const winRow = document.createElement("button");
+        winRow.className = "picker-window";
+        const multi = panes.length > 1;
+        winRow.textContent = `${first.windowIndex}:${first.windowName}${multi ? ` — ${panes.length} panes` : ""}`;
+        winRow.classList.toggle("selected", viewMode === "window" && pinnedWindow === windowId);
+        winRow.addEventListener("click", () => selectWindow(windowId, session));
+        el.pickerList.appendChild(winRow);
+
+        for (const pane of panes) {
+          const button = document.createElement("button");
+          button.className = "picker-pane";
+          const title = pane.paneTitle && pane.paneTitle !== pane.windowName ? ` - ${pane.paneTitle}` : "";
+          button.textContent = `${pane.active ? "* " : ""}.${pane.paneIndex}${title} (${pane.width}x${pane.height})`;
+          button.classList.toggle("selected", viewMode !== "window" && pinned === pane.paneId);
+          button.addEventListener("click", () => selectPane(pane));
+          el.pickerList.appendChild(button);
+        }
       }
     }
     el.picker.hidden = false;
@@ -745,6 +1055,9 @@
   el.autoToggle.addEventListener("click", () => {
     setAuto(!auto);
     el.autoToggle.classList.remove("hot");
+  });
+  el.windowToggle.addEventListener("click", () => {
+    setViewMode(viewMode === "window" ? "pane" : "window");
   });
   el.themeToggle.addEventListener("click", () => {
     const next = document.body.classList.contains("theme-day") ? "dark" : "day";
@@ -826,6 +1139,7 @@
     applyTheme(localStorage.getItem("airc_theme") || cfg.theme);
     interval = cfg.pollMs;
     await measureFont();
+    applyViewMode();
     applyFont();
     updateStatus();
     setInterval(updateStatus, 15000);

@@ -23,6 +23,7 @@
     <span class="spacer"></span>
     <button id="mobile-menu-toggle" title="more controls" aria-expanded="false">menu</button>
     <button id="auto-toggle" title="follow the pane that needs you" hidden>auto</button>
+    <button id="window-toggle" title="show the whole tmux window (all panes)">win</button>
     <button id="font-minus">A-</button>
     <button id="font-plus">A+</button>
     <button id="font-fit" class="active">Fit</button>
@@ -32,6 +33,7 @@
   </header>
   <main id="term-wrap">
     <pre id="term"></pre>
+    <div id="term-grid" hidden></div>
     <div id="cursor" hidden></div>
   </main>
   <footer id="control-bar" hidden>

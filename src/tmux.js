@@ -89,6 +89,7 @@ async function listPanes(session) {
     "#{pane_height}",
     "#{window_active}#{pane_active}",
     "#{pane_current_command}",
+    "#{window_id}",
   ].join("\t");
   const result = await run(["list-panes", "-s", "-t", `=${session}`, "-F", format]);
   if (!result.ok) {
@@ -107,8 +108,67 @@ async function listPanes(session) {
       height: Number(parts[6]),
       active: parts[7] === "11",
       command: parts[8] || "",
+      windowId: parts[9] || "",
     };
   });
+}
+
+// Geometry for every pane of one window, used to reconstruct the tmux layout in
+// the browser. `target` is a window id (`@3`) or any pane/window target tmux
+// accepts; `-t` without `-s`/`-a` scopes the listing to that one window. Each
+// row carries the pane's position and size within the window grid plus the
+// window's own dimensions, so the client can lay the panes out on a character
+// grid and fit a font to the whole window.
+async function listWindowPanes(target) {
+  const format = [
+    "#{pane_id}",
+    "#{pane_left}",
+    "#{pane_top}",
+    "#{pane_width}",
+    "#{pane_height}",
+    "#{window_width}",
+    "#{window_height}",
+    "#{cursor_x}",
+    "#{cursor_y}",
+    "#{pane_active}",
+    "#{pane_index}",
+    "#{pane_title}",
+    "#{pane_current_command}",
+    "#{window_id}",
+    "#{window_index}",
+    "#{window_name}",
+    "#{session_name}",
+  ].join("\t");
+  const result = await run(["list-panes", "-t", target, "-F", format]);
+  if (!result.ok) {
+    return null;
+  }
+  const panes = result.stdout.split("\n").filter(Boolean).map((line) => {
+    const parts = line.split("\t");
+    if (!parts[0].startsWith("%")) {
+      return null;
+    }
+    return {
+      paneId: parts[0],
+      left: Number(parts[1]),
+      top: Number(parts[2]),
+      width: Number(parts[3]),
+      height: Number(parts[4]),
+      windowWidth: Number(parts[5]),
+      windowHeight: Number(parts[6]),
+      cursorX: Number(parts[7]),
+      cursorY: Number(parts[8]),
+      active: parts[9] === "1",
+      paneIndex: Number(parts[10]),
+      paneTitle: parts[11],
+      command: parts[12] || "",
+      windowId: parts[13] || "",
+      windowIndex: Number(parts[14]),
+      windowName: parts[15],
+      session: parts[16],
+    };
+  }).filter(Boolean);
+  return panes.length > 0 ? panes : null;
 }
 
 // Glob support for configured session entries: `*` matches any run of
@@ -211,6 +271,7 @@ module.exports = {
   capturePane,
   capturePanePlain,
   listPanes,
+  listWindowPanes,
   listPanesForSessions,
   listSessions,
   expandSessions,

@@ -298,6 +298,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     viewers: new Map(),
   };
   const resizeState = { lastCols: 0, lastRows: 0, lastAt: 0 };
+  // Window-mode resize is throttled per window id (the grid the viewer fills),
+  // separate from the single-pane active-view throttle above.
+  const windowResize = new Map(); // windowId -> { cols, rows, at }
 
   // --- Attention: which panes have an agent that needs interaction ----------
   // A single server-wide scan (not per-connection) captures every candidate
@@ -334,7 +337,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     }
     const now = Date.now();
     const prev = attention.get(paneId);
-    const entry = prev || { session: "", windowName: "", paneIndex: 0, agent: "", lastHash: "" };
+    const entry = prev || { session: "", windowName: "", windowId: "", paneIndex: 0, agent: "", lastHash: "" };
     if (entry.state !== state) {
       entry.since = now;
     }
@@ -373,6 +376,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     const entry = prev || { since: now, state: STATE.NONE, source: "screen", pendingState: undefined, pendingCount: 0 };
     entry.session = pane.session;
     entry.windowName = pane.windowName;
+    entry.windowId = pane.windowId;
     entry.paneIndex = pane.paneIndex;
     entry.agent = detected.agent || entry.agent || "";
     entry.source = "screen";
@@ -456,6 +460,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       .map(([paneId, e]) => ({
         paneId,
         session: e.session,
+        windowId: e.windowId || "",
         windowName: e.windowName,
         paneIndex: e.paneIndex,
         agent: e.agent,
@@ -566,6 +571,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
         ok: true,
         session: meta.session,
         paneId: meta.paneId,
+        windowId: meta.windowId,
         windowIndex: meta.windowIndex,
         windowName: meta.windowName,
         paneIndex: meta.paneIndex,
@@ -581,7 +587,136 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     };
   }
 
+  // Resolve which window the viewer should see, in precedence order: an
+  // explicitly pinned window (`@id`), then the window of a pinned pane (`%id`),
+  // then the active pane of the requested/configured session and whatever window
+  // it currently sits in. `pinValid` is false only when a pin was asked for but
+  // could not be honoured (so the client can drop a stale pin, mirroring
+  // captureFrame's pinned-pane fallback).
+  async function resolveWindowTarget(requestedWindow, requestedPane, requestedSession) {
+    if (requestedWindow && /^@\d+$/.test(requestedWindow)) {
+      const layout = await tmux.listWindowPanes(requestedWindow);
+      if (layout) {
+        return { windowId: requestedWindow, pinValid: true };
+      }
+    }
+    if (requestedPane && /^%\d+$/.test(requestedPane)) {
+      const meta = await tmux.paneMeta(requestedPane);
+      if (meta && meta.windowId) {
+        return { windowId: meta.windowId, pinValid: true };
+      }
+    }
+    const active = await resolveActivePane(config, requestedSession);
+    if (active && active.windowId) {
+      return { windowId: active.windowId, pinValid: !(requestedWindow || requestedPane) };
+    }
+    return null;
+  }
+
+  // Capture every pane of one window and assemble a single frame the browser
+  // lays out on a character grid. Mirrors captureFrame's shape (ok/etag/payload)
+  // so the WS and HTTP paths treat pane- and window-frames uniformly. The viewed
+  // window is pinned by a pane id (its window) or follows the active pane's
+  // window; when resizeToViewport is on, the whole window is reshaped to the
+  // viewport grid — fine because airc's premise is an unattended laptop.
+  async function captureWindowFrame({ requestedWindow = "", requestedPane = "", requestedSession = "", cols = NaN, rows = NaN, viewerAddress = "" }) {
+    const target = await resolveWindowTarget(requestedWindow, requestedPane, requestedSession);
+    if (!target) {
+      return {
+        payload: { ok: false, error: "no tmux session available", serverTime: new Date().toISOString() },
+        etag: "",
+      };
+    }
+
+    if (config.resizeToViewport) {
+      const now = Date.now();
+      const last = windowResize.get(target.windowId) || { cols: 0, rows: 0, at: 0 };
+      if (Number.isInteger(cols) && Number.isInteger(rows) &&
+          cols >= 20 && cols <= 500 && rows >= 5 && rows <= 200 &&
+          (cols !== last.cols || rows !== last.rows) &&
+          now - last.at > RESIZE_MIN_INTERVAL_MS) {
+        windowResize.set(target.windowId, { cols, rows, at: now });
+        tmux.resizeWindow(target.windowId, cols, rows).then((ok) => {
+          log(`resize-window ${target.windowId} -> ${cols}x${rows}${ok ? "" : " failed"}`);
+        });
+      }
+    }
+
+    const layout = await tmux.listWindowPanes(target.windowId);
+    if (!layout) {
+      return {
+        payload: { ok: false, error: "window not found", serverTime: new Date().toISOString() },
+        etag: "",
+      };
+    }
+
+    const captures = await Promise.all(layout.map((pane) => tmux.capturePane(pane.paneId)));
+    stats.lastCaptureAt = Date.now();
+    if (viewerAddress) {
+      stats.viewers.set(viewerAddress, Date.now());
+    }
+
+    const head = layout[0];
+    const hash = crypto.createHash("sha1");
+    hash.update(`${head.session}|${head.windowId}|${head.windowWidth}x${head.windowHeight}|${target.pinValid}|`);
+    const panes = layout.map((pane, index) => {
+      const capture = captures[index];
+      const text = capture.ok ? capture.text : "";
+      hash.update(`${pane.paneId}|${pane.left},${pane.top}|${pane.width}x${pane.height}|${pane.cursorX},${pane.cursorY}|${pane.active}|`);
+      hash.update(text);
+      return {
+        paneId: pane.paneId,
+        left: pane.left,
+        top: pane.top,
+        cols: pane.width,
+        rows: pane.height,
+        active: pane.active,
+        paneIndex: pane.paneIndex,
+        paneTitle: pane.paneTitle,
+        cursor: { x: pane.cursorX, y: pane.cursorY },
+        html: capture.ok ? ansiToHtml(text) : "",
+        error: capture.ok ? "" : capture.error,
+      };
+    });
+
+    return {
+      etag: `"${hash.digest("hex")}"`,
+      payload: {
+        ok: true,
+        mode: "window",
+        session: head.session,
+        windowId: head.windowId,
+        windowIndex: head.windowIndex,
+        windowName: head.windowName,
+        cols: head.windowWidth,
+        rows: head.windowHeight,
+        pinned: Boolean(requestedWindow || requestedPane) && target.pinValid,
+        pinValid: target.pinValid,
+        panes,
+        serverTime: new Date().toISOString(),
+      },
+    };
+  }
+
   async function handleFrame(request, response, url) {
+    if (url.searchParams.get("mode") === "window") {
+      const frame = await captureWindowFrame({
+        requestedWindow: url.searchParams.get("window") || "",
+        requestedPane: url.searchParams.get("pane") || "",
+        requestedSession: url.searchParams.get("session") || "",
+        cols: Number(url.searchParams.get("cols")),
+        rows: Number(url.searchParams.get("rows")),
+        viewerAddress: clientAddress(request),
+      });
+      const etag = frame.etag;
+      if (etag && request.headers["if-none-match"] === etag) {
+        response.writeHead(304, { ETag: etag, "Cache-Control": "no-store" });
+        response.end();
+        return;
+      }
+      sendJson(response, 200, frame.payload, etag ? { ETag: etag } : {});
+      return;
+    }
     const frame = await captureFrame({
       requestedPane: url.searchParams.get("pane") || "",
       requestedSession: url.searchParams.get("session") || "",
@@ -656,6 +791,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     if (meta && entry) {
       entry.session = meta.session;
       entry.windowName = meta.windowName;
+      entry.windowId = meta.windowId;
       entry.paneIndex = meta.paneIndex;
     }
     sendJson(response, 200, { ok: true, paneId, state: attention.get(paneId).state });
@@ -953,7 +1089,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     const wsState = {
       buffer: Buffer.alloc(0),
       pane: "",
+      window: "",
       session: "",
+      mode: "pane",
       cols: NaN,
       rows: NaN,
       etag: "",
@@ -993,7 +1131,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       }
       wsState.sending = true;
       try {
-        const frame = await captureFrame({
+        const capture = wsState.mode === "window" ? captureWindowFrame : captureFrame;
+        const frame = await capture({
+          requestedWindow: wsState.window,
           requestedPane: wsState.pane,
           requestedSession: wsState.session,
           cols: wsState.cols,
@@ -1039,7 +1179,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
           const payload = JSON.parse(message.text);
           if (payload.type === "view") {
             wsState.pane = typeof payload.pane === "string" && /^%\d+$/.test(payload.pane) ? payload.pane : "";
+            wsState.window = typeof payload.window === "string" && /^@\d+$/.test(payload.window) ? payload.window : "";
             wsState.session = typeof payload.session === "string" ? payload.session : "";
+            wsState.mode = payload.mode === "window" ? "window" : "pane";
             wsState.cols = Number(payload.cols);
             wsState.rows = Number(payload.rows);
             wsState.etag = "";

@@ -38,6 +38,23 @@
   --c12: #0550ae; --c13: #6639ba; --c14: #3192aa; --c15: #8c959f;
 }
 
+/* Solarized light: dark, low-saturation ink on a warm pale ground. */
+.theme-sunny {
+  --bg: #eee8d5;
+  --fg: #586e75;
+  --term-bg: #fdf6e3;
+  --chrome: #e4ddc6;
+  --border: #d7cfb8;
+  --muted: #657b83;
+  --accent: #859900;
+  --warn: #b58900;
+  --bad: #dc322f;
+  --c0: #073642; --c1: #dc322f; --c2: #859900; --c3: #b58900;
+  --c4: #268bd2; --c5: #d33682; --c6: #2aa198; --c7: #657b83;
+  --c8: #586e75; --c9: #cb4b16; --c10: #859900; --c11: #b58900;
+  --c12: #268bd2; --c13: #6c71c4; --c14: #2aa198; --c15: #93a1a1;
+}
+
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {

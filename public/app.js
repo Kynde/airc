@@ -107,10 +107,15 @@
     el.mobileMenuToggle.setAttribute("aria-expanded", mobileMenuOpen ? "true" : "false");
   }
 
+  const THEME_CYCLE = ["dark", "day", "sunny"];
+
   function applyTheme(theme) {
-    document.body.classList.toggle("theme-day", theme === "day");
-    document.body.classList.toggle("theme-dark", theme !== "day");
-    el.themeToggle.textContent = theme === "day" ? "dark" : "day";
+    if (!THEME_CYCLE.includes(theme)) theme = "dark";
+    for (const t of THEME_CYCLE) {
+      document.body.classList.toggle("theme-" + t, t === theme);
+    }
+    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
+    el.themeToggle.textContent = next;
   }
 
   async function measureFont() {
@@ -1060,7 +1065,8 @@
     setViewMode(viewMode === "window" ? "pane" : "window");
   });
   el.themeToggle.addEventListener("click", () => {
-    const next = document.body.classList.contains("theme-day") ? "dark" : "day";
+    const current = THEME_CYCLE.find((t) => document.body.classList.contains("theme-" + t)) || "dark";
+    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(current) + 1) % THEME_CYCLE.length];
     localStorage.setItem("airc_theme", next);
     applyTheme(next);
   });

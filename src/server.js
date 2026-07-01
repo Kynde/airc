@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
 const path = require("node:path");
+const zlib = require("node:zlib");
 
 const { ansiToHtml } = require("./ansi");
 const { authLevel, authCookie, tokenEquals } = require("./auth");
@@ -195,20 +196,62 @@ function websocketAccept(key) {
   return crypto.createHash("sha1").update(`${key}${WS_GUID}`).digest("base64");
 }
 
-function websocketFrame(payload) {
-  const body = Buffer.from(payload);
+// RFC 7692 permessage-deflate. We negotiate no_context_takeover on both ends,
+// so every message is (de)compressed against a fresh dictionary and a stateless
+// one-shot codec is correct. `finishFlush: Z_SYNC_FLUSH` produces the sync-flush
+// framing the peer expects; the empty block it implies (00 00 ff ff) is dropped
+// on send and re-appended before inflating. The per-message dictionary costs
+// little here because the server already skips unchanged frames, so consecutive
+// frames on the wire aren't near-duplicates anyway.
+const WS_DEFLATE_TAIL = Buffer.from([0x00, 0x00, 0xff, 0xff]);
+// Below this, DEFLATE's block framing makes the payload bigger than the input
+// (a heartbeat compresses to the same size, "{}" grows). Compress frames, send
+// small control messages as plain text — permessage-deflate allows per-message.
+const WS_DEFLATE_MIN = 200;
+
+function deflateMessage(body) {
+  const out = zlib.deflateRawSync(body, { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+  return out.subarray(0, out.length - WS_DEFLATE_TAIL.length);
+}
+
+function inflateMessage(body) {
+  return zlib.inflateRawSync(Buffer.concat([body, WS_DEFLATE_TAIL]), {
+    finishFlush: zlib.constants.Z_SYNC_FLUSH,
+  });
+}
+
+// Accept the extension only when the client offers it; answer with
+// no_context_takeover on both ends (the most compatible variant, notably with
+// OkHttp on Android). Clients that don't offer it keep getting plain frames.
+function negotiateDeflate(header) {
+  return (
+    typeof header === "string" &&
+    header.split(",").some((offer) => offer.trim().toLowerCase().startsWith("permessage-deflate"))
+  );
+}
+
+function websocketFrame(payload, deflate = false) {
+  let body = Buffer.from(payload);
+  let first = 0x81;
+  if (deflate && body.length >= WS_DEFLATE_MIN) {
+    const compressed = deflateMessage(body);
+    if (compressed.length < body.length) {
+      body = compressed;
+      first |= 0x40; // RSV1: this message is compressed
+    }
+  }
   if (body.length < 126) {
-    return Buffer.concat([Buffer.from([0x81, body.length]), body]);
+    return Buffer.concat([Buffer.from([first, body.length]), body]);
   }
   if (body.length <= 0xffff) {
     const header = Buffer.alloc(4);
-    header[0] = 0x81;
+    header[0] = first;
     header[1] = 126;
     header.writeUInt16BE(body.length, 2);
     return Buffer.concat([header, body]);
   }
   const header = Buffer.alloc(10);
-  header[0] = 0x81;
+  header[0] = first;
   header[1] = 127;
   header.writeBigUInt64BE(BigInt(body.length), 2);
   return Buffer.concat([header, body]);
@@ -245,6 +288,10 @@ function readWebsocketMessages(state, chunk) {
     if (state.buffer.length < offset + 4 + length) break;
     const first = state.buffer[0];
     const opcode = first & 0x0f;
+    const compressed = Boolean(first & 0x40); // RSV1
+    if (compressed && !state.deflate) {
+      throw new Error("unexpected compressed frame");
+    }
     const mask = state.buffer.subarray(offset, offset + 4);
     offset += 4;
     const encoded = state.buffer.subarray(offset, offset + length);
@@ -256,7 +303,8 @@ function readWebsocketMessages(state, chunk) {
     if (opcode === 0x8) {
       messages.push({ type: "close" });
     } else if (opcode === 0x1) {
-      messages.push({ type: "text", text: decoded.toString("utf8") });
+      const text = (compressed ? inflateMessage(decoded) : decoded).toString("utf8");
+      messages.push({ type: "text", text });
     }
   }
   return messages;
@@ -1055,17 +1103,25 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       rejectUpgrade(socket, 400);
       return;
     }
-    socket.write([
+    const deflate = negotiateDeflate(request.headers["sec-websocket-extensions"]);
+    const responseHeaders = [
       "HTTP/1.1 101 Switching Protocols",
       "Upgrade: websocket",
       "Connection: Upgrade",
       `Sec-WebSocket-Accept: ${websocketAccept(key)}`,
-      "\r\n",
-    ].join("\r\n"));
+    ];
+    if (deflate) {
+      responseHeaders.push(
+        "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover",
+      );
+    }
+    responseHeaders.push("\r\n");
+    socket.write(responseHeaders.join("\r\n"));
     wsSockets.add(socket);
     wsCounts.set(ip, (wsCounts.get(ip) || 0) + 1);
 
     const wsState = {
+      deflate,
       buffer: Buffer.alloc(0),
       pane: "",
       window: "",
@@ -1085,7 +1141,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
 
     function send(payload) {
       if (!wsState.closed && socket.writable) {
-        socket.write(websocketFrame(JSON.stringify(payload)));
+        socket.write(websocketFrame(JSON.stringify(payload), wsState.deflate));
       }
     }
 

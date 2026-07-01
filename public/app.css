@@ -384,7 +384,9 @@ body.mobile-view {
   width: calc(100% - 28px);
 }
 
-@media (max-width: 720px), (pointer: coarse) {
+/* Wide touch screens up to 1024px get the mobile view; the cap keeps the Tesla
+   browser (1180px normal viewport, see docs/tesla-browser.md) on the wide view. */
+@media (max-width: 720px), ((pointer: coarse) and (max-width: 1024px)) {
   html,
   body {
     height: 100dvh;

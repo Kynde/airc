@@ -87,7 +87,12 @@
   let followLeft = true;
   let followBottom = true;
   let mobileMenuOpen = false;
-  const mobileMedia = window.matchMedia("(max-width: 720px), (pointer: coarse)");
+  // Mobile view for narrow screens, plus wider touch screens up to 1024px so
+  // landscape phones/tablets get it too. The cap keeps the Tesla browser (1180px
+  // normal viewport, see docs/tesla-browser.md) on the wide view.
+  const mobileMedia = window.matchMedia(
+    "(max-width: 720px), ((pointer: coarse) and (max-width: 1024px))",
+  );
   let mobileView = mobileMedia.matches;
 
   function applyMobileView() {

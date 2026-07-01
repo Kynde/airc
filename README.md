@@ -37,7 +37,7 @@ optional add-ons for when you want more.
 
 ## Quick Start
 
-You need **Node ≥ 20** and **tmux**. Nothing else.
+You need **Node ≥ 20.19** and **tmux**. Nothing else.
 
 ```sh
 git clone https://github.com/Kynde/airc.git

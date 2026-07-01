@@ -6,12 +6,16 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node src/server.js --no-ngrok --host 0.0.0.0",
-    "check": "node scripts/check.js"
+    "lint": "eslint .",
+    "check": "eslint . && node scripts/check.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
   "dependencies": {
     "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "eslint": "^10.6.0"
   }
 }

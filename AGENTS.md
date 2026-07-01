@@ -51,7 +51,7 @@ Use the repo-root `Makefile` (`make help` lists targets); `make push`/`deploy`
 rebuild only when sources changed:
 
 ```sh
-make check                  # npm run check
+make check                  # npm run check (eslint + node --check); needs Node >= 20.19 for eslint
 make build                  # cd android-app && ./gradlew assembleDebug
 make push                   # rebuild if needed, then adb install -r
 ```

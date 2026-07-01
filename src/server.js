@@ -16,6 +16,23 @@ const { startNgrok } = require("./ngrok");
 const tmux = require("./tmux");
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
+const IMMUTABLE = "public, max-age=31536000, immutable";
+
+// Public static assets served pre-auth, keyed by request path:
+// [file within PUBLIC_DIR, Content-Type, Cache-Control].
+const STATIC_ASSETS = {
+  "/fonts/FiraCode-Regular.ttf": ["fonts/FiraCode-Regular.ttf", "font/ttf", IMMUTABLE],
+  "/app.css": ["app.css", "text/css; charset=utf-8", "no-store"],
+  "/app.js": ["app.js", "text/javascript; charset=utf-8", "no-store"],
+  "/favicon.ico": ["favicon.ico", "image/x-icon", IMMUTABLE],
+  "/site.webmanifest": ["site.webmanifest", "application/manifest+json; charset=utf-8", "no-store"],
+  "/icons/favicon-16x16.png": ["icons/favicon-16x16.png", "image/png", IMMUTABLE],
+  "/icons/favicon-32x32.png": ["icons/favicon-32x32.png", "image/png", IMMUTABLE],
+  "/icons/apple-touch-icon.png": ["icons/apple-touch-icon.png", "image/png", IMMUTABLE],
+  "/icons/icon-192.png": ["icons/icon-192.png", "image/png", IMMUTABLE],
+  "/icons/icon-512.png": ["icons/icon-512.png", "image/png", IMMUTABLE],
+};
+
 const RESIZE_MIN_INTERVAL_MS = 2000;
 const INPUT_LIMIT_BYTES = 16 * 1024;
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -297,10 +314,29 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     lastInputAt: 0,
     viewers: new Map(),
   };
-  const resizeState = { lastCols: 0, lastRows: 0, lastAt: 0 };
+  const resizeState = { cols: 0, rows: 0, at: 0 };
   // Window-mode resize is throttled per window id (the grid the viewer fills),
   // separate from the single-pane active-view throttle above.
   const windowResize = new Map(); // windowId -> { cols, rows, at }
+
+  // Reshape a window to the viewer's grid, throttled: only when the request is a
+  // sane size, actually differs from `last`, and at least RESIZE_MIN_INTERVAL_MS
+  // has passed. `last` is mutated in place. Fire-and-forget — the next frame
+  // reflects the new size; a failure is only logged.
+  function maybeResizeWindow(windowId, cols, rows, last) {
+    const now = Date.now();
+    if (Number.isInteger(cols) && Number.isInteger(rows) &&
+        cols >= 20 && cols <= 500 && rows >= 5 && rows <= 200 &&
+        (cols !== last.cols || rows !== last.rows) &&
+        now - last.at > RESIZE_MIN_INTERVAL_MS) {
+      last.cols = cols;
+      last.rows = rows;
+      last.at = now;
+      tmux.resizeWindow(windowId, cols, rows).then((ok) => {
+        log(`resize-window ${windowId} -> ${cols}x${rows}${ok ? "" : " failed"}`);
+      });
+    }
+  }
 
   // --- Attention: which panes have an agent that needs interaction ----------
   // A single server-wide scan (not per-connection) captures every candidate
@@ -312,7 +348,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
   // else still works zero-config.
   const SHELL_COMMANDS = new Set(["zsh", "bash", "sh", "fish", "-zsh", "-bash", "login", "tmux"]);
   const HOOK_TTL_MS = 15000; // a hook signal stops overriding the screen after this
-  const attention = new Map(); // paneId -> { session, windowName, paneIndex, agent, state, since, source, lastHash, hookAt, pendingState, pendingCount }
+  const attention = new Map(); // paneId -> { session, windowName, paneIndex, agent, state, since, source, hookAt, pendingState, pendingCount }
   let scanning = false;
 
   function viewerCount() {
@@ -337,7 +373,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     }
     const now = Date.now();
     const prev = attention.get(paneId);
-    const entry = prev || { session: "", windowName: "", windowId: "", paneIndex: 0, agent: "", lastHash: "" };
+    const entry = prev || { session: "", windowName: "", windowId: "", paneIndex: 0, agent: "" };
     if (entry.state !== state) {
       entry.since = now;
     }
@@ -530,18 +566,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     }
 
     if (config.resizeToViewport && !requestedPane) {
-      const now = Date.now();
-      if (Number.isInteger(cols) && Number.isInteger(rows) &&
-          cols >= 20 && cols <= 500 && rows >= 5 && rows <= 200 &&
-          (cols !== resizeState.lastCols || rows !== resizeState.lastRows) &&
-          now - resizeState.lastAt > RESIZE_MIN_INTERVAL_MS) {
-        resizeState.lastCols = cols;
-        resizeState.lastRows = rows;
-        resizeState.lastAt = now;
-        tmux.resizeWindow(meta.windowId, cols, rows).then((ok) => {
-          log(`resize-window ${meta.windowId} -> ${cols}x${rows}${ok ? "" : " failed"}`);
-        });
-      }
+      maybeResizeWindow(meta.windowId, cols, rows, resizeState);
     }
 
     const capture = await tmux.capturePane(meta.paneId);
@@ -629,17 +654,12 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     }
 
     if (config.resizeToViewport) {
-      const now = Date.now();
-      const last = windowResize.get(target.windowId) || { cols: 0, rows: 0, at: 0 };
-      if (Number.isInteger(cols) && Number.isInteger(rows) &&
-          cols >= 20 && cols <= 500 && rows >= 5 && rows <= 200 &&
-          (cols !== last.cols || rows !== last.rows) &&
-          now - last.at > RESIZE_MIN_INTERVAL_MS) {
-        windowResize.set(target.windowId, { cols, rows, at: now });
-        tmux.resizeWindow(target.windowId, cols, rows).then((ok) => {
-          log(`resize-window ${target.windowId} -> ${cols}x${rows}${ok ? "" : " failed"}`);
-        });
+      let last = windowResize.get(target.windowId);
+      if (!last) {
+        last = { cols: 0, rows: 0, at: 0 };
+        windowResize.set(target.windowId, last);
       }
+      maybeResizeWindow(target.windowId, cols, rows, last);
     }
 
     const layout = await tmux.listWindowPanes(target.windowId);
@@ -698,40 +718,30 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     };
   }
 
-  async function handleFrame(request, response, url) {
-    if (url.searchParams.get("mode") === "window") {
-      const frame = await captureWindowFrame({
-        requestedWindow: url.searchParams.get("window") || "",
-        requestedPane: url.searchParams.get("pane") || "",
-        requestedSession: url.searchParams.get("session") || "",
-        cols: Number(url.searchParams.get("cols")),
-        rows: Number(url.searchParams.get("rows")),
-        viewerAddress: clientAddress(request),
-      });
-      const etag = frame.etag;
-      if (etag && request.headers["if-none-match"] === etag) {
-        response.writeHead(304, { ETag: etag, "Cache-Control": "no-store" });
-        response.end();
-        return;
-      }
-      sendJson(response, 200, frame.payload, etag ? { ETag: etag } : {});
+  // Emit a captured frame with conditional-GET support: a matching If-None-Match
+  // yields 304, otherwise the payload with its ETag. Both frame modes share this.
+  function respondFrame(request, response, frame) {
+    const { etag, payload } = frame;
+    if (etag && request.headers["if-none-match"] === etag) {
+      response.writeHead(304, { ETag: etag, "Cache-Control": "no-store" });
+      response.end();
       return;
     }
-    const frame = await captureFrame({
+    sendJson(response, 200, payload, etag ? { ETag: etag } : {});
+  }
+
+  async function handleFrame(request, response, url) {
+    const windowMode = url.searchParams.get("mode") === "window";
+    const capture = windowMode ? captureWindowFrame : captureFrame;
+    const frame = await capture({
+      requestedWindow: url.searchParams.get("window") || "",
       requestedPane: url.searchParams.get("pane") || "",
       requestedSession: url.searchParams.get("session") || "",
       cols: Number(url.searchParams.get("cols")),
       rows: Number(url.searchParams.get("rows")),
       viewerAddress: clientAddress(request),
     });
-    const etag = frame.etag;
-    if (request.headers["if-none-match"] === etag) {
-      response.writeHead(304, { ETag: etag, "Cache-Control": "no-store" });
-      response.end();
-      return;
-    }
-
-    sendJson(response, 200, frame.payload, etag ? { ETag: etag } : {});
+    respondFrame(request, response, frame);
   }
 
   async function handleInput(request, response) {
@@ -797,6 +807,14 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     sendJson(response, 200, { ok: true, paneId, state: attention.get(paneId).state });
   }
 
+  // The tunnel's live status, or a fixed "disabled" report when ngrok is off, so
+  // callers don't each spell out the empty shape.
+  function ngrokReport() {
+    return config.ngrok.enabled
+      ? ngrokStatus()
+      : { running: false, url: "", uptimeMs: 0, restarts: 0, lastError: "disabled" };
+  }
+
   async function handleHealthz(response) {
     const now = Date.now();
     for (const [address, ts] of stats.viewers) {
@@ -810,9 +828,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       ),
     )).filter(Boolean);
     const tmuxOk = liveSessions.length > 0;
-    const ngrok = config.ngrok.enabled
-      ? ngrokStatus()
-      : { running: false, url: "", uptimeMs: 0, restarts: 0, lastError: "disabled" };
+    const ngrok = ngrokReport();
     sendJson(response, 200, {
       ok: tmuxOk && (!config.ngrok.enabled || (ngrok.running && ngrok.url !== "")),
       session: config.session,
@@ -828,9 +844,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
   }
 
   function statusPayload() {
-    const ngrok = config.ngrok.enabled
-      ? ngrokStatus()
-      : { running: false, url: "", uptimeMs: 0, restarts: 0, lastError: "disabled" };
+    const ngrok = ngrokReport();
     return {
       serverTime: new Date().toISOString(),
       serverVersion: SERVER_VERSION,
@@ -863,44 +877,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     }
 
-    if (url.pathname === "/fonts/FiraCode-Regular.ttf") {
-      sendFile(response, "fonts/FiraCode-Regular.ttf", "font/ttf", "public, max-age=31536000, immutable");
-      return;
-    }
-    if (url.pathname === "/app.css") {
-      sendFile(response, "app.css", "text/css; charset=utf-8", "no-store");
-      return;
-    }
-    if (url.pathname === "/app.js") {
-      sendFile(response, "app.js", "text/javascript; charset=utf-8", "no-store");
-      return;
-    }
-    if (url.pathname === "/favicon.ico") {
-      sendFile(response, "favicon.ico", "image/x-icon", "public, max-age=31536000, immutable");
-      return;
-    }
-    if (url.pathname === "/site.webmanifest") {
-      sendFile(response, "site.webmanifest", "application/manifest+json; charset=utf-8", "no-store");
-      return;
-    }
-    if (url.pathname === "/icons/favicon-16x16.png") {
-      sendFile(response, "icons/favicon-16x16.png", "image/png", "public, max-age=31536000, immutable");
-      return;
-    }
-    if (url.pathname === "/icons/favicon-32x32.png") {
-      sendFile(response, "icons/favicon-32x32.png", "image/png", "public, max-age=31536000, immutable");
-      return;
-    }
-    if (url.pathname === "/icons/apple-touch-icon.png") {
-      sendFile(response, "icons/apple-touch-icon.png", "image/png", "public, max-age=31536000, immutable");
-      return;
-    }
-    if (url.pathname === "/icons/icon-192.png") {
-      sendFile(response, "icons/icon-192.png", "image/png", "public, max-age=31536000, immutable");
-      return;
-    }
-    if (url.pathname === "/icons/icon-512.png") {
-      sendFile(response, "icons/icon-512.png", "image/png", "public, max-age=31536000, immutable");
+    const asset = STATIC_ASSETS[url.pathname];
+    if (asset) {
+      sendFile(response, ...asset);
       return;
     }
 

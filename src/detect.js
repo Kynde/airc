@@ -26,9 +26,6 @@ const STATE = Object.freeze({
   NONE: "none",
 });
 
-// Confidence per source/strength; lets the scanner and hooks be merged sanely.
-const CONFIDENCE = Object.freeze({ waiting: 0.9, busy: 0.85, idleInput: 0.7 });
-
 // --- Claude Code -----------------------------------------------------------
 // busy:   spinner with a live elapsed-time + token counter, e.g.
 //           "✽ Beaming… (9m 3s · ↓ 42.7k tokens)"  /  "✶ Sock-hopping… (4s · ↓ 111 tokens)"
@@ -106,16 +103,9 @@ const DETECTORS = [
   },
 ];
 
-function confidenceFor(state) {
-  if (state === STATE.WAITING) return CONFIDENCE.waiting;
-  if (state === STATE.BUSY) return CONFIDENCE.busy;
-  if (state === STATE.IDLE_INPUT) return CONFIDENCE.idleInput;
-  return 0;
-}
-
 // Classify a single pane. `text` is a plain capture-pane dump; `command` is the
 // pane's foreground command (used to route to the right detector and cheaply
-// reject shells). Returns { agent, state, confidence }.
+// reject shells). Returns { agent, state }.
 function detectPaneState({ text = "", command = "" } = {}) {
   for (const detector of DETECTORS) {
     if (!detector.matches({ command, text })) {
@@ -123,12 +113,12 @@ function detectPaneState({ text = "", command = "" } = {}) {
     }
     const state = detector.classify({ text });
     if (state !== STATE.NONE) {
-      return { agent: detector.name, state, confidence: confidenceFor(state) };
+      return { agent: detector.name, state };
     }
     // A recognized agent in an unclassifiable screen is still "not waiting".
-    return { agent: detector.name, state: STATE.NONE, confidence: 0 };
+    return { agent: detector.name, state: STATE.NONE };
   }
-  return { agent: "", state: STATE.NONE, confidence: 0 };
+  return { agent: "", state: STATE.NONE };
 }
 
 module.exports = { detectPaneState, STATE };

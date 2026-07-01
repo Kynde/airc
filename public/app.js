@@ -207,6 +207,18 @@
     applyScrollFollow();
   }
 
+  // Nudge the manual font size by delta steps, switching out of auto-fit. Shared
+  // by the A-/A+ buttons; reads the rendered size so the first press steps from
+  // whatever fit chose rather than a stale stored value.
+  function adjustFont(delta) {
+    const current = parseFloat(el.term.style.fontSize) || cfg.fontSizeDefault;
+    fontSize = clamp(current + delta, FONT_MIN, FONT_MAX);
+    fontMode = "manual";
+    localStorage.setItem("airc_font_mode", fontMode);
+    localStorage.setItem("airc_font_size", String(fontSize));
+    applyFont();
+  }
+
   function applyControlsVisibility() {
     const visible = cfg.canControl && controlsVisible;
     el.controlsToggle.hidden = !cfg.canControl;
@@ -856,10 +868,9 @@
   // tapping a running agent to watch it (or auto landing on one) holds — even
   // as other agents work — until something more urgent appears, e.g. an agent
   // asking a question, which always wins. Without this it would hop between
-  // equally-busy panes and never let you settle. Returns undefined to hold.
-  // The pane auto should follow. `currentPaneId` is what's being watched now —
-  // the pinned pane in pane mode, the focused pane in window mode — so the
-  // sticky-by-urgency comparison holds in either view. Returns undefined to hold.
+  // equally-busy panes and never let you settle. `currentPaneId` is what's being
+  // watched now — the pinned pane in pane mode, the focused pane in window mode —
+  // so the comparison holds in either view. Returns undefined to hold.
   function autoTarget(currentPaneId) {
     let best;
     for (const item of attentionList) {
@@ -1031,22 +1042,8 @@
       el.picker.hidden = true;
     }
   });
-  el.fontMinus.addEventListener("click", () => {
-    const current = parseFloat(el.term.style.fontSize) || cfg.fontSizeDefault;
-    fontSize = clamp(current - 1, FONT_MIN, FONT_MAX);
-    fontMode = "manual";
-    localStorage.setItem("airc_font_mode", fontMode);
-    localStorage.setItem("airc_font_size", String(fontSize));
-    applyFont();
-  });
-  el.fontPlus.addEventListener("click", () => {
-    const current = parseFloat(el.term.style.fontSize) || cfg.fontSizeDefault;
-    fontSize = clamp(current + 1, FONT_MIN, FONT_MAX);
-    fontMode = "manual";
-    localStorage.setItem("airc_font_mode", fontMode);
-    localStorage.setItem("airc_font_size", String(fontSize));
-    applyFont();
-  });
+  el.fontMinus.addEventListener("click", () => adjustFont(-1));
+  el.fontPlus.addEventListener("click", () => adjustFont(1));
   el.fontFit.addEventListener("click", () => {
     fontMode = "auto";
     localStorage.setItem("airc_font_mode", fontMode);

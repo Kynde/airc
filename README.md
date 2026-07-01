@@ -177,6 +177,12 @@ There's also a zsh completion at `completions/_airc` (subcommands, `status
 - `android-app/`: optional native Android client
 - `config.example.json`: server config defaults
 
+## Vibe / Author
+
+The code here was largely written by AI agents. It was done in accordance to my specifications. This is a hobby project and a research into agentic workflows. The project itself evolved from a simple tmux viewer for my car into what it is now. I use it daily for work as well as extra curriculum activities.
+
+I've been coding since I was 8 back in 1984, I have over 30 years of professional experience in programming countless langauges.
+
 ## License
 
 [MIT](LICENSE).

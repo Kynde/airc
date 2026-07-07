@@ -1119,6 +1119,25 @@
       closeCtrlMenu();
     }
   });
+  // Physical-keyboard passthrough while controls are on: Enter and arrows go
+  // straight to the pane, mirroring the control-bar buttons. Skipped when a
+  // form field or button has focus (typing and button activation win) and
+  // when the picker overlay is open.
+  const PASSTHROUGH_KEYS = { Enter: "Enter", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right" };
+  document.addEventListener("keydown", (event) => {
+    const key = PASSTHROUGH_KEYS[event.key];
+    if (!key || !cfg.canControl || !controlsVisible) {
+      return;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) {
+      return;
+    }
+    if (!el.picker.hidden || event.target.closest?.("input, textarea, select, button, [contenteditable]")) {
+      return;
+    }
+    event.preventDefault();
+    sendControlKey(key);
+  });
   el.termWrap.addEventListener("scroll", updateScrollFollow, { passive: true });
   window.addEventListener("resize", applyFont);
   window.addEventListener("resize", sendViewState);

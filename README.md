@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="#60-second-quick-start">Quick Start</a> ·
-  <a href="#clients">Clients</a> ·
+  <a href="#quick-start">Quick Start</a> ·
   <a href="#going-remote">Going Remote</a> ·
+  <a href="#clients">Clients</a> ·
   <a href="INSTALLATION.md">Install</a> ·
   <a href="#more-docs">Docs</a>
 </p>
@@ -44,10 +44,10 @@ git clone https://github.com/Kynde/airc.git
 cd airc
 npm install
 
-tmux new -s main       # or attach to a session you already have
+tmux new -s main             # or attach to a session you already have
 
-tools/airc local       # serve on your LAN
-tools/airc pair-web    # prints a QR + URL - open it on your phone
+tools/airc local             # serve on your LAN
+tools/airc pair-web-control  # prints a QR + URL - open it on your phone
 ```
 
 Scan the QR (or open the printed URL) on any device on the same Wi-Fi, and the
@@ -58,40 +58,12 @@ live terminal is in your hand.
 > `work*` allowed) only when you want to narrow the scope.
 
 > **No tokens to configure.** On first run Airc generates strong `viewToken` and
-> `controlToken` values into `config.json` for you. `pair-web` hands out the
-> view-only token; [`pair-web-control`](#view-vs-control) hands out the one that
-> can type.
+> `controlToken` values into `config.json` for you. `pair-web-control` hands out
+> the token that can type; [`pair-web`](#view-vs-control) hands out a view-only
+> one, for when you'd rather share a read-only link.
 
 `local` mode binds your LAN address and keeps everything on your own network —
 no third-party services involved.
-
-## Clients
-
-Airc is a server with two interchangeable front-ends.
-
-| Client | Setup | View | Control |
-|---|---|---|---|
-| **Browser** — phone, tablet, desktop, Tesla | none | ✓ | ✓ (with control token) |
-| **Android app** *(optional)* | build the APK once | ✓ | ✓ |
-
-The Android app is a nicer always-on experience — native keyboard, attention
-alerts, automatic LAN↔public failover — but everything it does over the network
-the browser does too. Pick whichever fits; you can ignore the app entirely.
-
-### View vs. Control
-
-Airc uses two tokens, so you can share a read-only link safely:
-
-- **`viewToken`** — can *watch* the terminal, nothing else.
-- **`controlToken`** — can watch **and** send keystrokes to tmux.
-
-```sh
-tools/airc pair-web           # QR/URL with the VIEW token (read-only)
-tools/airc pair-web-control   # QR/URL with the CONTROL token (can type)
-tools/airc pair-app           # Android pairing payload (control token)
-```
-
-The browser only shows the input controls when you open it with a control token.
 
 ## Features
 
@@ -114,14 +86,27 @@ mobile data, a friend's network, a car on the road — Airc can run behind a
 public [ngrok](https://ngrok.com) tunnel:
 
 ```sh
-tools/airc on          # start the server with the configured tunnel
-tools/airc pair-web    # QR/URL now points at the public address
+tools/airc on                # start the server with the configured tunnel
+tools/airc pair-web-control  # QR/URL now points at the public address
 ```
 
 ngrok needs a (free) account and a one-time setup, and you set your own tunnel
 domain in `config.json`. The full walkthrough — plus how to serve LAN **and**
 tunnel at once so the app uses a direct connection at home and the tunnel away —
 is in **[INSTALLATION.md](INSTALLATION.md#public-access-with-ngrok)**.
+
+## Clients
+
+Airc is a server with two interchangeable front-ends.
+
+| Client | Setup | View | Control |
+|---|---|---|---|
+| **Browser** — phone, tablet, desktop, Tesla | none | ✓ | ✓ (with control token) |
+| **Android app** *(optional)* | build the APK once | ✓ | ✓ |
+
+The Android app is a nicer always-on experience — native keyboard, attention
+alerts, automatic LAN↔public failover — but everything it does over the network
+the browser does too. Pick whichever fits; you can ignore the app entirely.
 
 ## Android App (optional)
 
@@ -144,6 +129,21 @@ SDK. See **[INSTALLATION.md](INSTALLATION.md#installing-the-android-app)**.
   <img src="docs/airc_app.jpg" alt="Airc Android app in action" width="320">
 </p>
 
+## View vs. Control
+
+Airc uses two tokens, so you can share a read-only link safely:
+
+- **`viewToken`** — can *watch* the terminal, nothing else.
+- **`controlToken`** — can watch **and** send keystrokes to tmux.
+
+```sh
+tools/airc pair-web           # QR/URL with the VIEW token (read-only)
+tools/airc pair-web-control   # QR/URL with the CONTROL token (can type)
+tools/airc pair-app           # Android pairing payload (control token)
+```
+
+The browser only shows the input controls when you open it with a control token.
+
 ## Common Commands
 
 ```sh
@@ -164,6 +164,15 @@ There's also a zsh completion at `completions/_airc` (subcommands, `status
 --json`, and live tmux session names for `--session`); wiring is covered in
 [INSTALLATION.md](INSTALLATION.md#zsh-completions).
 
+## Project Layout
+
+- `tools/airc`: start/stop/status/pair wrapper for the laptop server
+- `src/server.js`: HTTP/WebSocket API and lifecycle
+- `src/tmux.js`: tmux capture, pane listing, and input forwarding
+- `public/`: browser viewer and terminal assets
+- `android-app/`: optional native Android client
+- `config.example.json`: server config defaults
+
 ## More Docs
 
 - [Installation](INSTALLATION.md): full prerequisites, ngrok setup, building the app
@@ -174,15 +183,6 @@ There's also a zsh completion at `completions/_airc` (subcommands, `status
 - [Attention](docs/attention.md): detecting which pane's agent needs you
 - [Tesla Browser Findings](docs/tesla-browser.md): in-car browser/network notes
 - [Future Work](docs/future-work.md): known next improvements
-
-## Project Layout
-
-- `tools/airc`: start/stop/status/pair wrapper for the laptop server
-- `src/server.js`: HTTP/WebSocket API and lifecycle
-- `src/tmux.js`: tmux capture, pane listing, and input forwarding
-- `public/`: browser viewer and terminal assets
-- `android-app/`: optional native Android client
-- `config.example.json`: server config defaults
 
 ## Vibe / Author
 

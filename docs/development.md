@@ -34,7 +34,7 @@ Airc defaults to `8080`.
 Local mode:
 
 ```sh
-tools/airc local --session airc
+tools/airc local
 ```
 
 This prepends:

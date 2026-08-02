@@ -44,14 +44,18 @@ git clone https://github.com/Kynde/airc.git
 cd airc
 npm install
 
-tmux new                          # or attach to a session you already have
+tmux new -s main       # or attach to a session you already have
 
-tools/airc local --session main   # serve on your LAN
-tools/airc pair-web               # prints a QR + URL - open it on your phone
+tools/airc local       # serve on your LAN
+tools/airc pair-web    # prints a QR + URL - open it on your phone
 ```
 
 Scan the QR (or open the printed URL) on any device on the same Wi-Fi, and the
 live terminal is in your hand.
+
+> **No session to pick.** Airc follows every live tmux session by default, so
+> the name above doesn't matter. Pass `--session NAME` (repeatable, globs like
+> `work*` allowed) only when you want to narrow the scope.
 
 > **No tokens to configure.** On first run Airc generates strong `viewToken` and
 > `controlToken` values into `config.json` for you. `pair-web` hands out the
@@ -110,8 +114,8 @@ mobile data, a friend's network, a car on the road — Airc can run behind a
 public [ngrok](https://ngrok.com) tunnel:
 
 ```sh
-tools/airc on --session main   # start the server with the configured tunnel
-tools/airc pair-web            # QR/URL now points at the public address
+tools/airc on          # start the server with the configured tunnel
+tools/airc pair-web    # QR/URL now points at the public address
 ```
 
 ngrok needs a (free) account and a one-time setup, and you set your own tunnel
@@ -143,15 +147,18 @@ SDK. See **[INSTALLATION.md](INSTALLATION.md#installing-the-android-app)**.
 ## Common Commands
 
 ```sh
-tools/airc local --session NAME   # serve on the LAN (no tunnel, no accounts)
-tools/airc on --session NAME      # serve behind the configured ngrok tunnel
-tools/airc status                 # process + health
-tools/airc pair-web               # view-only browser QR/URL
-tools/airc pair-web-control       # control browser QR/URL
-tools/airc pair-app               # Android pairing QR/JSON
-tools/airc off                    # stop the server
-tools/airc logs                   # path to the server log
+tools/airc local              # serve on the LAN (no tunnel, no accounts)
+tools/airc on                 # serve behind the configured ngrok tunnel
+tools/airc status             # process + health
+tools/airc pair-web           # view-only browser QR/URL
+tools/airc pair-web-control   # control browser QR/URL
+tools/airc pair-app           # Android pairing QR/JSON
+tools/airc off                # stop the server
+tools/airc logs               # path to the server log
 ```
+
+`local` and `on` take `--session NAME` (repeatable, globs allowed) to narrow the
+scope from the default of every live session, plus `--host`/`--port` overrides.
 
 There's also a zsh completion at `completions/_airc` (subcommands, `status
 --json`, and live tmux session names for `--session`); wiring is covered in

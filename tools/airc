@@ -30,7 +30,8 @@ Commands:
   logs                   print the background server log path
 
 Examples:
-  tools/airc local --session swyd
+  tools/airc local
+  tools/airc local --session swyd   # narrow to one session (default: all)
   tools/airc pair-app
   tools/airc pair-web
 `);
@@ -122,6 +123,18 @@ async function authenticatedJson(config, pathname) {
   return response.json();
 }
 
+// What to show as "the session(s)". The configured scope may be a glob (the
+// default is `*`), which isn't a session name, so report what tmux actually has
+// live and fall back to the configured patterns when nothing matches.
+function sessionLabel(health) {
+  const live = health?.liveSessions || [];
+  if (live.length) {
+    return live.join(", ");
+  }
+  const configured = health?.sessions || (health?.session ? [health.session] : []);
+  return `${configured.join(", ") || "none"} (missing)`;
+}
+
 function printPairing(payload) {
   const encoded = JSON.stringify(payload);
   printQr(encoded);
@@ -153,7 +166,7 @@ async function cmdOn(extraArgs, mode = "on") {
   const pid = activePid();
   if (pid) {
     const health = await healthz(config);
-    console.log(`airc: already on (pid ${pid}${health?.session ? `, session: ${health.session}` : ""})`);
+    console.log(`airc: already on (pid ${pid}${health ? `, sessions: ${sessionLabel(health)}` : ""})`);
     return;
   }
 
@@ -192,7 +205,7 @@ async function cmdOn(extraArgs, mode = "on") {
     console.error(`airc: started pid ${child.pid}, but /healthz did not respond; see ${LOG_FILE}`);
     process.exit(1);
   }
-  console.log(`airc: on (pid ${child.pid}, session: ${health.session}${health.tmuxOk ? "" : " - tmux session MISSING"})`);
+  console.log(`airc: on (pid ${child.pid}, sessions: ${sessionLabel(health)})`);
   if (config.ngrok.enabled && !health.ngrok.url) {
     console.error(`airc: tunnel not up yet; see ${LOG_FILE}`);
     process.exit(1);
@@ -256,7 +269,7 @@ async function cmdStatus(json) {
   console.log([
     `airc: ${health.ok ? "on" : "on (degraded)"}`,
     `pid: ${pid}`,
-    `session: ${health.session}${health.tmuxOk ? "" : " (missing)"}`,
+    `sessions: ${sessionLabel(health)}`,
     `tunnel: ${health.ngrok.url || "none"}`,
     `viewers: ${health.viewersLastMin}`,
     `log: ${LOG_FILE}`,

@@ -52,7 +52,7 @@ Then start it on your LAN and pair a browser:
 
 ```sh
 tmux new -s main
-tools/airc local --session main
+tools/airc local
 tools/airc pair-web
 ```
 
@@ -66,7 +66,7 @@ tools/airc pair-web
 |---|---|---|
 | `host` | `127.0.0.1` | Bind address. `0.0.0.0` exposes it on the LAN (what `local` sets). |
 | `port` | `8080` | HTTP port (browsers). |
-| `sessions` | `["main"]` | tmux session name(s) to follow; supports `*`/`?` globs. |
+| `sessions` | `["*"]` | tmux session name(s) to follow; supports `*`/`?` globs. The default follows every live session; set it only to narrow the scope. |
 | `viewToken` / `controlToken` | auto-generated | View-only vs. can-type tokens. |
 | `theme` | `dark` | Initial browser theme. |
 | `tls.enabled` | `true` | Serve HTTPS for the app alongside HTTP — see [App over HTTPS](#app-over-https). |
@@ -119,8 +119,8 @@ ngrok config add-authtoken <YOUR_AUTHTOKEN>
 **5. Start in tunnel mode and pair:**
 
 ```sh
-tools/airc on --session main   # Airc supervises the ngrok child process
-tools/airc pair-web            # QR/URL now points at your public domain
+tools/airc on          # Airc supervises the ngrok child process
+tools/airc pair-web    # QR/URL now points at your public domain
 ```
 
 Airc starts and restarts the ngrok agent for you while the server runs; you do
@@ -141,7 +141,7 @@ the tunnel only when you're away. The server has to bind a non-loopback address
 **and** keep ngrok enabled:
 
 ```sh
-tools/airc on --session main --host 0.0.0.0
+tools/airc on --host 0.0.0.0
 ```
 
 (or set `"host": "0.0.0.0"` in `config.json`). With the default `host:

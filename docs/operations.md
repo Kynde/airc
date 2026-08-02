@@ -2,7 +2,8 @@
 
 ## Running
 
-The tmux session must already exist:
+A tmux session must already exist — any name will do, since Airc follows every
+live session unless told otherwise:
 
 ```sh
 tmux new -s main
@@ -11,7 +12,7 @@ tmux new -s main
 Start local same-WLAN mode (the default, no accounts needed):
 
 ```sh
-tools/airc local --session main
+tools/airc local
 tools/airc pair-app
 ```
 
@@ -19,9 +20,12 @@ Start configured ngrok mode (requires ngrok setup — see
 [INSTALLATION.md](../INSTALLATION.md#public-access-with-ngrok)):
 
 ```sh
-tools/airc on --session main
+tools/airc on
 tools/airc pair-web
 ```
+
+Narrow the scope with `--session NAME` (repeatable) when you want Airc to see
+only some sessions — for example `tools/airc local --session work --session ops`.
 
 `tools/airc local` prepends `--host 0.0.0.0 --no-ngrok`. Use `tools/airc on`
 when the configured ngrok tunnel should be started by the server; ngrok ships
@@ -93,6 +97,8 @@ only know LAN URLs because local mode disables ngrok.
 - A configured `sessions` entry may use shell-style globs (`*` matches any run
   of characters, `?` a single one), so `foo*` follows every live session whose
   name starts with `foo`. Entries without glob characters stay exact matches.
+  The default is `["*"]` — every live session — so `sessions` only needs setting
+  when you want a narrower scope.
 - Type in the bottom field, then tap `send` or use the keyboard send action.
 - Quick buttons send Up, Down, and Enter.
 - `A-` and `A+` adjust app-side font rendering only; they do not resize tmux.

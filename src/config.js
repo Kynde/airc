@@ -14,7 +14,10 @@ const DEFAULTS = {
   productName: "AI Remote Control",
   host: "127.0.0.1",
   port: 8080,
-  session: "main",
+  // Follow every live tmux session by default: the zero-config path shouldn't
+  // care what you named the session you already have open. Narrowing the scope
+  // (a name, a list, or a `foo*` glob) is opt-in, via config or --session.
+  sessions: ["*"],
   pollMs: 700,
   pollIdleMaxMs: 2500,
   viewToken: "",
@@ -195,7 +198,7 @@ function loadConfig(argv) {
     normalizeSessions(args.sessions).length ? normalizeSessions(args.sessions)
       : normalizeSessions(fileConfig.sessions).length ? normalizeSessions(fileConfig.sessions)
         : normalizeSessions(fileConfig.session).length ? normalizeSessions(fileConfig.session)
-          : normalizeSessions(DEFAULTS.session);
+          : normalizeSessions(DEFAULTS.sessions);
   config.session = config.sessions[0];
 
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) {
@@ -274,10 +277,14 @@ function pairingPayload(config, actualBaseUrl = "", tls = null) {
   const lanUrls = localLanAddresses(config.port);
   const preferredBaseUrl = actualBaseUrl || (config.ngrok.enabled ? baseUrl(config) : (lanUrls[0] || baseUrl(config)));
   const sessions = config.sessions || [config.session];
+  // Globs aren't session names, so they'd read as noise in the app's device
+  // label ("thinkpad *"). Name the device after the sessions it is pinned to,
+  // or after the host alone when the scope is "whatever is running".
+  const named = sessions.filter((session) => !/[*?]/.test(session));
   return {
     type: "airc-tmux-remote",
     version: 2,
-    name: `${os.hostname()} ${sessions.join(", ")}`,
+    name: [os.hostname(), named.join(", ")].filter(Boolean).join(" "),
     baseUrl: preferredBaseUrl,
     token: config.controlToken,
     session: config.session,

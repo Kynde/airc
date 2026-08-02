@@ -11,7 +11,7 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#going-remote">Going Remote</a> ·
-  <a href="#clients">Clients</a> ·
+  <a href="#android-app-optional">Android App</a> ·
   <a href="INSTALLATION.md">Install</a> ·
   <a href="#more-docs">Docs</a>
 </p>
@@ -51,11 +51,8 @@ tools/airc pair-web-control  # prints a QR + URL - open it on your phone
 ```
 
 Scan the QR (or open the printed URL) on any device on the same Wi-Fi, and the
-live terminal is in your hand.
-
-> **No session to pick.** Airc follows every live tmux session by default, so
-> the name above doesn't matter. Pass `--session NAME` (repeatable, globs like
-> `work*` allowed) only when you want to narrow the scope.
+live terminal is in your hand. Airc follows every live tmux session by default,
+so the name above doesn't matter.
 
 > **No tokens to configure.** On first run Airc generates strong `viewToken` and
 > `controlToken` values into `config.json` for you. `pair-web-control` hands out
@@ -95,31 +92,14 @@ domain in `config.json`. The full walkthrough — plus how to serve LAN **and**
 tunnel at once so the app uses a direct connection at home and the tunnel away —
 is in **[INSTALLATION.md](INSTALLATION.md#public-access-with-ngrok)**.
 
-## Clients
-
-Airc is a server with two interchangeable front-ends.
-
-| Client | Setup | View | Control |
-|---|---|---|---|
-| **Browser** — phone, tablet, desktop, Tesla | none | ✓ | ✓ (with control token) |
-| **Android app** *(optional)* | build the APK once | ✓ | ✓ |
-
-The Android app is a nicer always-on experience — native keyboard, attention
-alerts, automatic LAN↔public failover — but everything it does over the network
-the browser does too. Pick whichever fits; you can ignore the app entirely.
-
 ## Android App (optional)
 
-A native client with a few comforts the browser can't easily match:
+Everything above works in the browser. The Android app is the same server seen
+through a native client, and it adds two things the browser can't easily match:
 
-- tmux pane display with ANSI colors and cursor
-- follow-active-pane by default, plus a pane picker for pinning
-- Android keyboard input including dictation from the system IME
-- quick keys and app-side font adjustment (`A-` / `A+`)
-- attention chips + an `auto` toggle that follows whichever pane needs you
-  (see [Attention](docs/attention.md))
-- one pairing payload carries both LAN and public URLs, and the app fails over
-  between them automatically
+- **Dictation and a real keyboard** — Android IME input, including voice.
+- **Automatic failover** — one pairing payload carries both your LAN and public
+  URLs, so the app uses the direct connection at home and the tunnel away.
 
 Grab the signed APK from the [latest release](https://github.com/Kynde/airc/releases/latest)
 (`airc-<version>.apk`) and sideload it, or build it yourself with the Android
@@ -157,32 +137,12 @@ tools/airc off                # stop the server
 tools/airc logs               # path to the server log
 ```
 
-`local` and `on` take `--session NAME` (repeatable, globs allowed) to narrow the
-scope from the default of every live session, plus `--host`/`--port` overrides.
-
-There's also a zsh completion at `completions/_airc` (subcommands, `status
---json`, and live tmux session names for `--session`); wiring is covered in
-[INSTALLATION.md](INSTALLATION.md#zsh-completions).
-
-## Project Layout
-
-- `tools/airc`: start/stop/status/pair wrapper for the laptop server
-- `src/server.js`: HTTP/WebSocket API and lifecycle
-- `src/tmux.js`: tmux capture, pane listing, and input forwarding
-- `public/`: browser viewer and terminal assets
-- `android-app/`: optional native Android client
-- `config.example.json`: server config defaults
-
 ## More Docs
 
-- [Installation](INSTALLATION.md): full prerequisites, ngrok setup, building the app
-- [Docs index](docs/README.md): recommended reading order
+- [Installation](INSTALLATION.md): prerequisites, ngrok setup, building the app,
+  zsh completions
 - [Operations](docs/operations.md): running, pairing, sizing, troubleshooting
-- [Development](docs/development.md): architecture, APIs, build/test notes
-- [Implementation Notes](docs/implementation-notes.md): tmux capture, auth, polling, sizing
-- [Attention](docs/attention.md): detecting which pane's agent needs you
-- [Tesla Browser Findings](docs/tesla-browser.md): in-car browser/network notes
-- [Future Work](docs/future-work.md): known next improvements
+- [Docs index](docs/README.md): everything else, in recommended reading order
 
 ## Vibe / Author
 

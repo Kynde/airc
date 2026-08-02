@@ -1,6 +1,6 @@
 # Installation
 
-This covers everything beyond the [60-second Quick Start](README.md#60-second-quick-start):
+This covers everything beyond the [Quick Start](README.md#quick-start):
 full prerequisites, public access with ngrok, and building the optional Android
 app. For day-to-day running and troubleshooting, see
 [docs/operations.md](docs/operations.md).

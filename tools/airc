@@ -270,7 +270,10 @@ async function cmdStatus(json) {
     `airc: ${health.ok ? "on" : "on (degraded)"}`,
     `pid: ${pid}`,
     `sessions: ${sessionLabel(health)}`,
-    `tunnel: ${health.ngrok.url || "none"}`,
+    `public: ${health.publicUrl || health.ngrok.url || "none"}`,
+    // Only worth a column when ngrok is up but not the advertised route, i.e.
+    // it's running as a fallback behind a configured publicUrl.
+    ...(health.ngrok.url && health.ngrok.url !== health.publicUrl ? [`ngrok: ${health.ngrok.url}`] : []),
     `viewers: ${health.viewersLastMin}`,
     `log: ${LOG_FILE}`,
   ].join(" | "));
@@ -295,7 +298,9 @@ async function publicUrlFor(config) {
     return "";
   }
   const health = await healthz(config);
-  return health?.ngrok?.url || "";
+  // publicUrl already resolves external-tunnel-over-ngrok server-side; the ngrok
+  // fallback keeps this working against an older server that predates the field.
+  return health?.publicUrl || health?.ngrok?.url || "";
 }
 
 async function cmdPairWeb(level) {
@@ -306,7 +311,7 @@ async function cmdPairWeb(level) {
   console.log(`url: ${url}`);
   console.log(`token: ${level === "control" ? config.controlToken : config.viewToken}`);
   if (!actualPublicUrl) {
-    console.log("note: no active ngrok URL reported; using configured/default URL");
+    console.log("note: server reported no public URL; using configured/default URL");
   }
 }
 

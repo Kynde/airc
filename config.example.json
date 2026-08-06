@@ -16,6 +16,7 @@
     "debounceScans": 2,
     "maxPanes": 24
   },
+  "publicUrl": "",
   "ngrok": {
     "enabled": false,
     "domain": "your-domain.ngrok-free.dev",

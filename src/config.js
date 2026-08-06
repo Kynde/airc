@@ -35,6 +35,11 @@ const DEFAULTS = {
     debounceScans: 2,
     maxPanes: 24,
   },
+  // An externally managed tunnel (Tailscale Funnel, Cloudflare Tunnel, a
+  // reverse proxy) fronting this server. airc neither starts nor supervises it;
+  // it only needs the URL so bookmarks, the pairing QR and /api/config advertise
+  // the reachable address instead of a LAN one. Takes precedence over ngrok.
+  publicUrl: "",
   ngrok: {
     // Off by default: the zero-setup path is LAN/browser access, which needs no
     // account. Set enabled:true (and a real domain) only after configuring ngrok
@@ -205,6 +210,13 @@ function loadConfig(argv) {
     throw new Error("port must be an integer between 1 and 65535");
   }
 
+  // A trailing slash here would produce "https://host//?k=..." in every
+  // bookmark and pairing payload, so normalize once at load.
+  config.publicUrl = typeof config.publicUrl === "string" ? config.publicUrl.trim().replace(/\/+$/, "") : "";
+  if (config.publicUrl && !/^https?:\/\//.test(config.publicUrl)) {
+    throw new Error("publicUrl must start with http:// or https://");
+  }
+
   const persisted = { ...fileConfig };
   let changed = false;
   if (!config.controlToken) {
@@ -255,6 +267,12 @@ function localLanAddresses(port) {
 }
 
 function baseUrl(config) {
+  // An externally managed tunnel outranks ngrok: it is the address the operator
+  // pointed at this server, so it stays authoritative even when ngrok is left
+  // configured (and running) as a fallback route.
+  if (config.publicUrl) {
+    return config.publicUrl;
+  }
   if (config.ngrok.enabled) {
     return `https://${config.ngrok.domain}`;
   }

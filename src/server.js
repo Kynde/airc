@@ -886,6 +886,11 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       lastCaptureAgeMs: stats.lastCaptureAt === 0 ? null : now - stats.lastCaptureAt,
       lastInputAgeMs: stats.lastInputAt === 0 ? null : now - stats.lastInputAt,
       viewersLastMin: stats.viewers.size,
+      // The address clients should actually use: an external tunnel when one is
+      // configured, else whatever ngrok currently reports. tools/airc reads this
+      // for pairing output, which must not fall back to the ngrok URL while a
+      // publicUrl is set.
+      publicUrl: currentPublicUrl() || ngrok.url || "",
       ngrok,
       uptimeMs: now - startedAt,
     });
@@ -1347,7 +1352,9 @@ function main() {
   }
 
   let ngrok = null;
-  let publicUrl = "";
+  // A configured external tunnel is the advertised address from the first
+  // request on; ngrok, if enabled, only fills this in when nothing else has.
+  let publicUrl = config.publicUrl || "";
   const ngrokStatus = () => (ngrok ? ngrok.status() : { running: false, url: "", uptimeMs: 0, restarts: 0, lastError: "" });
   const server = makeServer(config, ngrokStatus, () => publicUrl, tls);
 
@@ -1355,7 +1362,9 @@ function main() {
     log(`airc tmux remote listening on http://${config.host}:${config.port} (sessions: ${config.sessions.join(", ")})`);
     if (config.ngrok.enabled) {
       ngrok = startNgrok({ ...config.ngrok, port: config.port }, log, (url) => {
-        publicUrl = url;
+        if (!config.publicUrl) {
+          publicUrl = url;
+        }
         log(`bookmark: ${bookmarkUrl(config, "view", publicUrl)}`);
         log(`pairing: ${JSON.stringify(pairingPayload(config, publicUrl, tls))}`);
       });

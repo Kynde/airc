@@ -9,6 +9,7 @@ app. For day-to-day running and troubleshooting, see
 
 - [Prerequisites](#prerequisites)
 - [Server setup](#server-setup)
+- [Public access with an external tunnel](#public-access-with-an-external-tunnel)
 - [Public access with ngrok](#public-access-with-ngrok)
 - [LAN and tunnel at the same time](#lan-and-tunnel-at-the-same-time)
 - [Installing the Android app](#installing-the-android-app)
@@ -71,15 +72,58 @@ tools/airc pair-web
 | `theme` | `dark` | Initial browser theme. |
 | `tls.enabled` | `true` | Serve HTTPS for the app alongside HTTP — see [App over HTTPS](#app-over-https). |
 | `tls.port` | `8443` | HTTPS port the Android app connects to. |
+| `publicUrl` | `""` | Public address of a tunnel **you** run (Tailscale Funnel, Cloudflare Tunnel, a reverse proxy). Airc doesn't start it — it just advertises this in bookmarks and the pairing QR. Takes precedence over `ngrok.domain`. |
 | `ngrok.enabled` | `false` | Start a tunnel? Off by default — see below. |
 | `ngrok.domain` | placeholder | Your reserved ngrok domain. |
 
-## Public access with ngrok
+## Public access with an external tunnel
 
 LAN mode only reaches devices on the same Wi-Fi. To view from mobile data,
 another network, or a car on the road, run Airc behind a public tunnel.
-[ngrok](https://ngrok.com) is the supported option — its free tier gives you one
-reusable static domain, which makes a durable bookmark (handy for a Tesla).
+
+If you already run a tunnel — or want one Airc doesn't manage — set `publicUrl`
+and Airc will advertise that address everywhere it prints a link. It never starts
+or supervises the tunnel; that stays your job (a systemd unit, the tunnel's own
+background mode, whatever you prefer).
+
+```json
+{
+  "publicUrl": "https://your-host.example.ts.net"
+}
+```
+
+Any scheme works as long as it terminates TLS and proxies to Airc's HTTP port.
+**[Tailscale Funnel](https://tailscale.com/kb/1223/funnel)** is a good free
+choice: it gives a stable HTTPS hostname with no interstitial, and the viewing
+device needs nothing installed.
+
+```sh
+# one time, on the machine running Airc
+tailscale up
+tailscale funnel --bg 8080     # public on :443, proxying to Airc on :8080
+tailscale funnel status        # prints the https://<host>.ts.net URL
+```
+
+Funnel must be enabled once for your tailnet; `tailscale funnel` prints an admin
+URL if it isn't. Funnel only exposes ports 443, 8443 and 10000, so the public URL
+carries no port even though it proxies to 8080.
+
+One caveat: Tailscale Funnel does not pass a per-client `X-Forwarded-For`, so
+Airc sees every tunnelled request as coming from the local Tailscale address.
+Its failed-auth throttle and the 8-websockets-per-address cap therefore apply to
+all Funnel traffic as one bucket. Fine for personal use; worth knowing if you
+share the URL.
+
+## Public access with ngrok
+
+Airc can also start and supervise [ngrok](https://ngrok.com) itself. Its free
+tier gives you one reusable static domain, which makes a durable bookmark.
+
+> **Known problem:** ngrok's free tier serves an interstitial warning page to any
+> browser that hasn't clicked through it in the last 7 days, and that page does
+> not render in the Tesla browser — Airc never loads, on any path. The documented
+> workarounds (`ngrok-skip-browser-warning`, a custom `User-Agent`) are blocked on
+> free accounts, Traffic Policy included. Use an external tunnel or a paid plan.
 
 > Airc ships with `ngrok.enabled: false` and a **placeholder** domain. The steps
 > below are what turn it on; nothing here happens until you do them.

@@ -78,22 +78,35 @@ no third-party services involved.
 
 ## Going Remote
 
-NOTE: ngrok switched to a error.js that has js syntax too new for the Tesla browser
-so the trampoline page no longer loads. I'm looking into switching to a different tunnel provider.
-
 `local` mode only reaches devices on the same Wi-Fi. To watch from anywhere —
 mobile data, a friend's network, a car on the road — Airc can run behind a
-public [ngrok](https://ngrok.com) tunnel:
+public tunnel.
+
+> **ngrok is currently unusable from the Tesla browser.** ngrok's free tier puts
+> an interstitial warning page in front of any browser that hasn't clicked
+> through it lately — the "Visit Site" click sets a cookie that only lasts 7
+> days — and that page renders blank in the car, so Airc never loads. While it's
+> showing, every path is affected, `/probe` included. The interstitial draws all
+> of its content from `cdn.ngrok.com`, so nothing appears if that script doesn't
+> run, and there's no button left to click. ngrok blocks the documented
+> workarounds (`ngrok-skip-browser-warning`, custom `User-Agent`) on free
+> accounts, including via Traffic Policy. Use an external tunnel instead, or a
+> paid ngrok plan.
+
+Point `publicUrl` at any tunnel you run yourself — [Tailscale
+Funnel](INSTALLATION.md#public-access-with-an-external-tunnel), Cloudflare Tunnel,
+a reverse proxy — and Airc advertises that address in bookmarks and the pairing
+QR. Airc doesn't start or supervise it; it only needs the URL.
+
+Airc can also run ngrok itself, which needs a (free) account and a one-time
+setup. The full walkthrough for both — plus how to serve LAN **and** tunnel at
+once so the app uses a direct connection at home and the tunnel away — is in
+**[INSTALLATION.md](INSTALLATION.md#public-access-with-an-external-tunnel)**.
 
 ```sh
 tools/airc on                # start the server with the configured tunnel
 tools/airc pair-web-control  # QR/URL now points at the public address
 ```
-
-ngrok needs a (free) account and a one-time setup, and you set your own tunnel
-domain in `config.json`. The full walkthrough — plus how to serve LAN **and**
-tunnel at once so the app uses a direct connection at home and the tunnel away —
-is in **[INSTALLATION.md](INSTALLATION.md#public-access-with-ngrok)**.
 
 ## Android App (optional)
 

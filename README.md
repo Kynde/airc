@@ -78,6 +78,9 @@ no third-party services involved.
 
 ## Going Remote
 
+NOTE: ngrok switched to a error.js that has js syntax too new for the Tesla browser
+so the trampoline page no longer loads. I'm looking into switching to a different tunnel provider.
+
 `local` mode only reaches devices on the same Wi-Fi. To watch from anywhere —
 mobile data, a friend's network, a car on the road — Airc can run behind a
 public [ngrok](https://ngrok.com) tunnel:

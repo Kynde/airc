@@ -350,8 +350,17 @@
     if (lanOrigins.includes(here) || isLanHostname(host)) {
       return "wlan";
     }
-    if (originOf(cfg.publicUrl) === here || host.includes("ngrok")) {
+    // Name the tunnel provider when the hostname gives it away, so a fallback
+    // route is distinguishable from the advertised one at a glance. Anything
+    // else reaching us on the configured publicUrl is just "tunnel".
+    if (host.includes("ngrok")) {
       return "ngrok";
+    }
+    if (host.endsWith(".ts.net")) {
+      return "tailscale";
+    }
+    if (originOf(cfg.publicUrl) === here) {
+      return "tunnel";
     }
     return "net";
   }

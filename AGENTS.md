@@ -40,6 +40,10 @@ Important behavior:
 - Browser controls follow the currently viewed pane.
 - Text input goes through `tmux send-keys -l`; named quick keys go through
   `tmux send-keys`.
+- Optional voice dictation (`dais.enabled`, off by default) hands the viewed pane
+  to the local dais daemon over its Unix socket; enabling it lets the control
+  token open the laptop's microphone, so treat that config key as a security
+  decision. See `docs/dais.md`.
 - Tmux grid size is the main readability lever. The app-side `A-`/`A+` controls
   only adjust local rendering.
 - Tesla/browser access should use ngrok/public URLs; local private LAN access

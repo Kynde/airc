@@ -254,6 +254,33 @@ body.mobile-view {
   font: inherit;
   padding: 0 10px;
 }
+/* Voice dictation (dais). The mic sits next to `send` because it produces the
+   same thing — text in the pane's input box — and it is deliberately the widest
+   button here: it is the one control aimed at a driver. Disabled means dais
+   isn't running; it stays VISIBLE so the reason can be read from its title. */
+#control-mic {
+  min-width: 96px;
+  flex: none;
+}
+#control-mic-discard {
+  min-width: 48px;
+  flex: none;
+}
+#control-mic[hidden],
+#control-mic-discard[hidden] {
+  display: none;
+}
+#control-bar button:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+}
+/* Recording: red like the "bad" state on purpose — an open microphone is
+   something you want to END — and the pulse mirrors the attention chip. */
+#control-mic.recording {
+  border-color: var(--bad);
+  color: var(--bad);
+  animation: pulse 1.6s ease-in-out infinite;
+}
 #control-left,
 #control-right {
   display: none;
@@ -434,6 +461,15 @@ body.mobile-view {
     display: none;
   }
 
+  /* …but a message must still be readable on a phone: #note is hidden to save
+     strip room, not when it actually has something to say (voice refusals). */
+  #note:not(:empty) {
+    display: block;
+    order: 5;
+    flex: 1 1 100%;
+    font-size: 11px;
+  }
+
   #mobile-menu-toggle {
     order: 4;
     display: inline-flex;
@@ -537,6 +573,20 @@ body.mobile-view {
 
   #control-send {
     grid-column: -2 / -1;
+  }
+
+  /* Mic and ✕ take a row of their own, so the arrow/ctrl row below stays the
+     tidy six columns it was before dictation existed. The mic gets four of the
+     six columns: it's the one control aimed at a driver, and the ✕ throws a
+     recording away, so they should not be equally easy to hit by accident. */
+  #control-mic {
+    grid-column: 1 / 5;
+    min-width: 0;
+  }
+
+  #control-mic-discard {
+    grid-column: 5 / -1;
+    min-width: 0;
   }
 
   #control-bar button {

@@ -49,6 +49,16 @@ const DEFAULTS = {
     binary: "ngrok",
     apiUrl: "http://127.0.0.1:4040",
   },
+  // Voice dictation through dais (the local voice daemon): a mic button in the
+  // control bar records and types the transcript into the pane you're viewing.
+  // OFF by default, and not merely for tidiness — with this on, the control
+  // token can open the laptop's MICROPHONE, which is a new capability class
+  // rather than more typing. Turn it on only where that is understood.
+  // Empty socket → $XDG_RUNTIME_DIR/dais/control.sock.
+  dais: {
+    enabled: false,
+    socket: "",
+  },
   // A self-signed cert is generated on first run so the Android app can talk
   // HTTPS/WSS over the LAN (pinned via the QR payload). Browsers keep using the
   // plain HTTP port — they can't accept a self-signed cert. Self-disables if
@@ -188,6 +198,7 @@ function loadConfig(argv) {
     ...fileConfig,
     ngrok: { ...DEFAULTS.ngrok, ...(fileConfig.ngrok || {}) },
     attention: { ...DEFAULTS.attention, ...(fileConfig.attention || {}) },
+    dais: { ...DEFAULTS.dais, ...(fileConfig.dais || {}) },
     tls: { ...DEFAULTS.tls, ...(fileConfig.tls || {}) },
   };
   if (args.host !== undefined) config.host = args.host;
@@ -215,6 +226,17 @@ function loadConfig(argv) {
   config.publicUrl = typeof config.publicUrl === "string" ? config.publicUrl.trim().replace(/\/+$/, "") : "";
   if (config.publicUrl && !/^https?:\/\//.test(config.publicUrl)) {
     throw new Error("publicUrl must start with http:// or https://");
+  }
+
+  // An absolute path or nothing: a relative socket path would resolve against
+  // whatever directory the server happened to be started from, which fails only
+  // later, at the first mic tap.
+  config.dais = {
+    enabled: Boolean(config.dais.enabled),
+    socket: typeof config.dais.socket === "string" ? config.dais.socket.trim() : "",
+  };
+  if (config.dais.socket && !path.isAbsolute(config.dais.socket)) {
+    throw new Error("dais.socket must be an absolute path (or empty for $XDG_RUNTIME_DIR/dais/control.sock)");
   }
 
   const persisted = { ...fileConfig };

@@ -16,6 +16,10 @@
     "debounceScans": 2,
     "maxPanes": 24
   },
+  "dais": {
+    "enabled": false,
+    "socket": ""
+  },
   "publicUrl": "",
   "ngrok": {
     "enabled": false,

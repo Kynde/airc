@@ -129,6 +129,12 @@ Use `tools/airc pair-web-control` only for trusted browsers. It prints a QR and
 URL with the control token; it does not open a browser from the CLI. Browser
 controls send input to the currently viewed pane.
 
+With `dais.enabled` (off by default), the control bar also gets a `🎙 speak`
+latch that records on the laptop, transcribes locally, and types the text into
+the viewed pane — you still tap `Enter` yourself. It greys out when the dais
+daemon isn't running. See [dais.md](dais.md), including what enabling it does to
+the control token's reach.
+
 `/probe` is available after auth for browser diagnostics.
 
 The browser top row shows public tunnel liveness and laptop battery status when

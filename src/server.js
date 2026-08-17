@@ -12,6 +12,7 @@ const zlib = require("node:zlib");
 const { ansiToHtml } = require("./ansi");
 const { authLevel, authCookie, tokenEquals } = require("./auth");
 const { loadConfig, bookmarkUrl, pairingPayload, localLanAddresses } = require("./config");
+const dais = require("./dais");
 const { detectPaneState, STATE } = require("./detect");
 const { startNgrok } = require("./ngrok");
 const tmux = require("./tmux");
@@ -855,6 +856,49 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     sendJson(response, 200, { ok: true, paneId, state: attention.get(paneId).state });
   }
 
+  // Voice dictation: hand the pane the viewer is looking at to dais and let it
+  // record, transcribe and type there. Type-only by design — the transcript
+  // lands in the pane's input box and the user submits it with the Enter button
+  // above, so a misheard prompt is readable before an agent acts on it.
+  //
+  // The pane goes through the same resolveInputTarget as every keystroke, so the
+  // `^%\d+$` trust boundary holds; dais treats it as an ephemeral, single-use
+  // aim and never touches its own durable target slots.
+  async function handleDaisDictate(request, response) {
+    let payload;
+    try {
+      payload = await readJsonBody(request);
+    } catch (error) {
+      sendJson(response, 400, { ok: false, error: error.message });
+      return;
+    }
+    const action = typeof payload.action === "string" ? payload.action : "";
+    if (!dais.ACTIONS.has(action)) {
+      sendJson(response, 400, { ok: false, error: "action must be start, stop, discard, or toggle" });
+      return;
+    }
+    // Only a start needs a pane. A stop/discard acts on whatever is already
+    // recording, and demanding a live pane there would strand a recording that
+    // must be stoppable even if its pane just died. `toggle` may become a stop,
+    // but dais ignores the pane in that case.
+    let pane = "";
+    if (action === "start" || action === "toggle") {
+      const target = await resolveInputTarget(config, payload);
+      if (!target.ok) {
+        sendJson(response, 400, target);
+        return;
+      }
+      pane = target.target;
+    }
+    const result = await dais.dictate(config, action, pane);
+    log(`dais dictate ${action}${pane ? ` ${pane}` : ""} -> ${result.ok ? "ok" : result.error}`);
+    // 503 when dais couldn't be reached at all, 409 when dais itself refused
+    // (mic already open, VAD session running, pane gone) — the browser shows
+    // `error` either way, but the split keeps the log and any future client honest.
+    const status = result.ok ? 200 : (result.unavailable ? 503 : 409);
+    sendJson(response, status, { ...result, action, pane });
+  }
+
   // The tunnel's live status, or a fixed "disabled" report when ngrok is off, so
   // callers don't each spell out the empty shape.
   function ngrokReport() {
@@ -994,6 +1038,10 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
         theme: config.theme,
         resizeToViewport: config.resizeToViewport,
         attentionEnabled: Boolean(config.attention.enabled),
+        // Only whether the feature is configured — never the socket path. The
+        // button hides when this is false and greys out when dais isn't running
+        // (that part comes from /api/dais/status).
+        dais: { enabled: Boolean(config.dais.enabled) },
         canControl,
         authLevel: auth.level,
         publicUrl: currentPublicUrl() || "",
@@ -1051,6 +1099,27 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
         return;
       }
       handleAgentEvent(request, response);
+      return;
+    }
+    if (url.pathname === "/api/dais/dictate" && request.method === "POST") {
+      // Control-gated like /api/tmux/input, and for a stronger reason: this one
+      // opens the laptop's microphone. Off unless explicitly configured.
+      if (!canControl || !config.dais.enabled) {
+        notFound(response);
+        return;
+      }
+      handleDaisDictate(request, response);
+      return;
+    }
+    if (url.pathname === "/api/dais/status" && request.method === "GET") {
+      // Control-gated too, unlike /api/attention: only a control client can use
+      // the button, and "the mic on that laptop is open right now" is not
+      // something a shared read-only link should report.
+      if (!canControl || !config.dais.enabled) {
+        notFound(response);
+        return;
+      }
+      sendJson(response, 200, { ok: true, ...dais.status(config) }, extraHeaders);
       return;
     }
     if (url.pathname === "/api/probe/poll" && request.method === "GET") {
@@ -1360,6 +1429,12 @@ function main() {
 
   server.listen(config.port, config.host, () => {
     log(`airc tmux remote listening on http://${config.host}:${config.port} (sessions: ${config.sessions.join(", ")})`);
+    if (config.dais.enabled) {
+      // Say so at startup, including whether the daemon is actually up: the mic
+      // button greying out in the car is otherwise the first place you'd learn it.
+      const present = dais.status(config).available ? "" : " — daemon not running yet";
+      log(`dais dictation enabled (socket: ${dais.socketPath(config)}${present})`);
+    }
     if (config.ngrok.enabled) {
       ngrok = startNgrok({ ...config.ngrok, port: config.port }, log, (url) => {
         if (!config.publicUrl) {

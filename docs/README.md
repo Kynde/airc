@@ -7,7 +7,8 @@ Read in this order when picking up the project:
 3. [Implementation Notes](implementation-notes.md)
 4. [Android Theming](android-theming.md)
 5. [Tesla Browser Findings](tesla-browser.md)
-6. [Future Work](future-work.md)
+6. [Speaking A Prompt (dais)](dais.md)
+7. [Future Work](future-work.md)
 
 The root [README](../README.md) stays short and welcoming;
 [INSTALLATION](../INSTALLATION.md) holds setup details (prerequisites, ngrok,

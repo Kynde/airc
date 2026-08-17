@@ -61,6 +61,22 @@ Possible approaches:
 
 Approach 3 is good enough for now.
 
+## Voice Dictation (dais)
+
+The browser mic button ([dais.md](dais.md)) landed type-only and browser-only.
+Left for later, in rough order of appeal:
+
+- **Android mirror** of the button — not a parity bug (the app has IME
+  dictation), but local transcription buys dais's dry-run and audit log.
+- **Auto-submit** — the `dictate` op could carry `submit`; typing-only was chosen
+  so a mis-transcribed prompt is readable before an agent acts on it.
+- **Symmetry the other way** — dais telling airc to swing the view to the pane a
+  spoken "target two" selected. Cheap once this exists, but needs a tiebreak
+  between two writers of "the pane you're looking at".
+- **Does the Tesla browser support `SpeechRecognition` at all?** `public/probe.html`
+  is the place to find out. Even if it does, that path is cloud transcription and
+  skips dais's local pipeline, dry-run and audit log — so it wouldn't replace this.
+
 ## Security
 
 Potential hardening:

@@ -71,6 +71,11 @@ no third-party services involved.
   Ctrl-key buttons that target the viewed pane.
 - **Attention alerts** — Airc notices which pane's agent is waiting on *you* and
   can auto-follow it. See [Attention](docs/attention.md).
+- **Speak a prompt** — optional: a mic button that records on the laptop,
+  transcribes it there, and types the text into the pane you're viewing, so a
+  car browser can dictate a whole instruction. Needs
+  [dais](https://github.com/Kynde/dais) and is off by default. See
+  [Speaking a prompt](docs/dais.md).
 - **Readable on small screens** — font fit/manual sizing, light/dark theme,
   pause.
 - **Works in a car** — tested in a Tesla browser; the viewer stays live while

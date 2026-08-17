@@ -72,6 +72,8 @@ tools/airc pair-web
 | `theme` | `dark` | Initial browser theme. |
 | `tls.enabled` | `true` | Serve HTTPS for the app alongside HTTP — see [App over HTTPS](#app-over-https). |
 | `tls.port` | `8443` | HTTPS port the Android app connects to. |
+| `dais.enabled` | `false` | Show the voice-dictation mic button ([docs/dais.md](docs/dais.md)). Off by default because with it on, the control token can also open the laptop's **microphone**. |
+| `dais.socket` | `""` | Path to the dais control socket; empty means `$XDG_RUNTIME_DIR/dais/control.sock`. Must be absolute. |
 | `publicUrl` | `""` | Public address of a tunnel **you** run (Tailscale Funnel, Cloudflare Tunnel, a reverse proxy). Airc doesn't start it — it just advertises this in bookmarks and the pairing QR. Takes precedence over `ngrok.domain`. |
 | `ngrok.enabled` | `false` | Start a tunnel? Off by default — see below. |
 | `ngrok.domain` | placeholder | Your reserved ngrok domain. |

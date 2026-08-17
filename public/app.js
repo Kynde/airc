@@ -29,6 +29,8 @@
     controlBar: document.getElementById("control-bar"),
     controlText: document.getElementById("control-text"),
     controlSend: document.getElementById("control-send"),
+    controlMic: document.getElementById("control-mic"),
+    controlMicDiscard: document.getElementById("control-mic-discard"),
     controlLeft: document.getElementById("control-left"),
     controlRight: document.getElementById("control-right"),
     controlUp: document.getElementById("control-up"),
@@ -233,6 +235,11 @@
     if (!visible) {
       closeCtrlMenu();
     }
+    renderDais();
+    if (visible) {
+      // Opening the bar shouldn't show an up-to-4s-stale mic button.
+      pollDais();
+    }
     applyFont();
   }
 
@@ -302,6 +309,139 @@
     sendControl({ key }).catch(() => {
       // The status ticker will show stale state if control/auth is broken.
     });
+  }
+
+  // Transient message in the strip (#note, warn-coloured). Used for things the
+  // user asked for and didn't get — a refused recording, an unreachable daemon —
+  // so a failure isn't just a button that quietly doesn't change.
+  let noteTimer = null;
+  function setNote(text) {
+    el.note.textContent = text || "";
+    clearTimeout(noteTimer);
+    if (text) {
+      noteTimer = setTimeout(() => { el.note.textContent = ""; }, 6000);
+    }
+  }
+
+  // --- dais voice dictation -------------------------------------------------
+  // A latch mic in the control bar, for driving: tap to record, tap to stop and
+  // transcribe, ✕ to throw the recording away. dais (the laptop's local voice
+  // daemon) types the transcript into the pane this viewer is aimed at — it does
+  // NOT submit, so a misheard prompt is readable before Enter sends it.
+  //
+  // Three visual states, because "nothing happens" is the worst answer in a car:
+  // hidden when the feature isn't configured, greyed out with a reason when dais
+  // isn't running, live otherwise.
+  let daisState = { available: false, micOpen: false, mode: "", target: "", dictateTarget: "", muted: false, dryRun: false };
+  let daisPending = false;
+
+  function daisEnabled() {
+    return Boolean(cfg.dais && cfg.dais.enabled) && cfg.canControl;
+  }
+
+  // dais's mode is authoritative when we have it; the mic marker is the fallback
+  // for a state.json that couldn't be read (see src/dais.js status()).
+  function daisRecording() {
+    return daisState.mode ? daisState.mode === "manual-recording" : daisState.micOpen;
+  }
+
+  function renderDais() {
+    const on = daisEnabled();
+    el.controlMic.hidden = !on;
+    el.controlMicDiscard.hidden = !on;
+    if (!on) {
+      return;
+    }
+    const recording = daisRecording();
+    const blocked = !daisState.available || daisPending;
+    el.controlMic.disabled = blocked;
+    el.controlMic.classList.toggle("recording", recording && daisState.available);
+    el.controlMic.textContent = recording ? "■ stop" : "🎙 speak";
+    const caveats = [];
+    if (daisState.muted) caveats.push("dais is muted — utterances are dropped");
+    if (daisState.dryRun) caveats.push("dais is in dry-run — nothing will be typed");
+    el.controlMic.title = [
+      !daisState.available
+        ? "dais is not running on the laptop"
+        : recording
+          ? "stop recording and type the transcript into this pane"
+          : "speak a prompt into this pane",
+      ...caveats,
+    ].join(" · ");
+    // The ✕ only means something while a recording is running or an aim is still
+    // pending (dais keeps the aim after a refused transcript, so it can be repeated).
+    el.controlMicDiscard.disabled = blocked || (!recording && !daisState.dictateTarget);
+  }
+
+  async function sendDais(action) {
+    if (!daisEnabled() || daisPending) {
+      return;
+    }
+    // Same reason typing drops auto mode: the recording is aimed at the pane you
+    // were looking at when you tapped, so auto must not slide the view (and your
+    // Enter key) to another pane while you talk.
+    if (auto && action !== "discard") {
+      setAuto(false);
+    }
+    daisPending = true;
+    renderDais();
+    try {
+      const response = await fetch("/api/dais/dictate", {
+        method: "POST",
+        cache: "no-store",
+        headers: headers({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ ...viewedTarget(), action }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        setNote(`voice: ${payload.error || `HTTP ${response.status}`}`);
+      } else if (action === "discard") {
+        setNote("voice: discarded");
+        daisState.mode = payload.mode || "";
+        daisState.dictateTarget = "";
+      } else {
+        // Trust the reply over our own guess about which way the toggle went:
+        // dais resolved it against its real mode.
+        const recording = payload.mode === "manual-recording";
+        setNote(recording
+          ? `voice: recording → ${payload.pane || payload.target || "target"}`
+          : "voice: transcribing…");
+        daisState.mode = payload.mode || "";
+        daisState.dictateTarget = payload.pane || "";
+      }
+    } catch {
+      setNote("voice: airc could not be reached");
+    } finally {
+      daisPending = false;
+      renderDais();
+      pollDais();
+    }
+  }
+
+  async function pollDais() {
+    if (!daisEnabled() || !controlsVisible) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/dais/status", { cache: "no-store", headers: headers() });
+      if (!response.ok) {
+        daisState.available = false;
+      } else {
+        daisState = { ...daisState, ...(await response.json()) };
+      }
+    } catch {
+      daisState.available = false;
+    }
+    renderDais();
+  }
+
+  // Only while the control bar is open (airc's "no work when nobody is watching"
+  // rule), and only fast while the mic is actually hot — a 1/s poll matters for
+  // the recording indicator, but not for a button nobody has touched.
+  async function daisTick() {
+    await pollDais();
+    const soon = controlsVisible && daisRecording();
+    setTimeout(daisTick, soon ? 1000 : 4000);
   }
 
   function renderStatus(payload) {
@@ -1093,6 +1233,10 @@
     placeCursor();
   });
   el.controlSend.addEventListener("click", sendControlText);
+  // "toggle", not start/stop: dais resolves it against its own mode, so a browser
+  // that missed a poll (or a latch started at the laptop with F10) can't invert it.
+  el.controlMic.addEventListener("click", () => sendDais("toggle"));
+  el.controlMicDiscard.addEventListener("click", () => sendDais("discard"));
   // Typing is taking over: drop auto from the first character so it can't yank
   // the view — and the half-typed message — to a different pane mid-sentence.
   el.controlText.addEventListener("input", () => {
@@ -1179,6 +1323,9 @@
     applyFont();
     updateStatus();
     setInterval(updateStatus, 15000);
+    if (daisEnabled()) {
+      daisTick();
+    }
     startWebSocket();
   }
 

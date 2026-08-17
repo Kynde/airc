@@ -15,6 +15,8 @@ ngrok supervision :: src/ngrok.js startNgrok # spawns the agent, polls 127.0.0.1
 attention detection signatures :: src/detect.js DETECTORS # per-agent TUI regexes; the version-fragile bit — change here when an agent's UI drifts
 attention scan/debounce/HUD state :: src/server.js scanAttention + applyScreenState + attentionItems # screen vs hook precedence, debounce, ranking
 agent hook intake :: src/server.js handleAgentEvent (`POST /api/agent/event`) # control-gated; maps coarse event → state, trusted for HOOK_TTL_MS
+voice dictation route :: src/server.js handleDaisDictate (`POST /api/dais/dictate`) + `GET /api/dais/status` # both control-gated AND gated on config.dais.enabled (404 otherwise); pane goes through the same resolveInputTarget as a keystroke
+dais client / status read :: src/dais.js dictate + status # one ndjson line over the Unix socket, 2s timeout, resolves-never-rejects; status reads the marker + state.json, never the socket. $DAIS_SOCKET is deliberately ignored
 security headers :: src/server.js request handler top (response.setHeader CSP/...) # CSP relaxed only for `/probe` (inline script); HSTS only when x-forwarded-proto=https
 rate limit / WS cap :: src/server.js recordFailedAuth/rateLimited + wsCounts # per-IP, keyed on clientAddress() which trusts X-Forwarded-For
 
@@ -29,6 +31,7 @@ entrypoint (foreground) :: tools/airc-tmux # one-liner that execs `node src/serv
 frame rendering / polling / WS :: public/app.js # WebSocket preferred, HTTP poll fallback; token bootstrapped from `?k=` into localStorage then stripped from the URL bar
 browser view-state handshake :: public/app.js sendViewState + src/server.js wsState.viewReady # client must send `{type:"view"}` after WS open; server defers first frame until then to preserve pins
 auto-follow target / what disables auto :: public/app.js autoTarget+applyAuto+AUTO_RANK # sticky-by-urgency (waiting>busy>idle, NOT the server's chip order); selectChip keeps auto, picker + first keystroke drop it. Mirror of MainActivity.kt applyAuto/autoRank
+mic button state machine :: public/app.js daisEnabled/daisRecording/renderDais/sendDais/daisTick + public/index.html #control-mic,#control-mic-discard # hidden when not configured, DISABLED (reason in title) when the daemon is down; poll only while the control bar is open; a tap drops auto mode
 viewer markup :: public/index.html ; diagnostics page :: public/probe.html # probe is the only page with an inline <script>
 mobile browser layout :: public/app.css mobile media query + public/app.js applyMobileView # responsive toolbar/control dock; phone auto-fit uses a larger minimum font and horizontal scroll
 web favicons / homescreen icons :: public/favicon.ico + public/icons/ + public/site.webmanifest + src/server.js static asset routes # generated from Android airc_icon.png
@@ -45,6 +48,6 @@ app id / version :: android-app/app/build.gradle.kts # applicationId dev.airc.tm
 ## Build / test
 
 syntax check :: npm run check (= node scripts/check.js) # `node --check` over src/ + public/ ONLY — does NOT run the unit tests
-unit tests :: node --test 'test/*.test.js' # detect.js fixtures; not wired into `npm run check` or any npm script
+unit tests :: node --test 'test/*.test.js' # detect.js fixtures + test/dais.test.js (fake ndjson daemon on a temp Unix socket); not wired into `npm run check` or any npm script
 android build/install :: make build / make push / make deploy # APK modeled as a file target; rebuilds only when sources changed
 release :: /release <patch|minor|major> or .claude/skills/release # tag is source of truth, v-prefixed; bumps package.json, gh release, fetch tag back

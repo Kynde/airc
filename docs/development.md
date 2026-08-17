@@ -8,6 +8,7 @@
 - `src/auth.js`: token extraction and `authLevel`
 - `src/config.js`: config defaults, CLI args, pairing payloads
 - `src/ngrok.js`: supervised ngrok child process
+- `src/dais.js`: ndjson client for the dais voice daemon (mic button; optional)
 - `public/`: browser viewer, probe page, terminal assets
 - `tools/airc`: background server wrapper
 - `android-app/`: native Kotlin Android client
@@ -63,6 +64,8 @@ Pairing payload behavior:
 - `POST /api/tmux/input`
 - `GET /api/attention` (panes whose agent needs interaction; see [attention.md](attention.md))
 - `POST /api/agent/event` (agent hook; control token)
+- `POST /api/dais/dictate` (voice dictation latch; control token; 404 unless `dais.enabled`)
+- `GET /api/dais/status` (mic/daemon state for the button; control token; see [dais.md](dais.md))
 - `GET /api/status`
 - `GET /probe`
 - `GET /api/probe/poll`

@@ -1,6 +1,6 @@
 # Attention: follow the pane that needs you
 
-When several coding agents (Claude Code, Codex, Copilot CLI, …) run across tmux panes, airc
+When several coding agents (Claude Code, Codex, Copilot CLI, oh-my-pi, …) run across tmux panes, airc
 can notice each one's state — blocked on a permission prompt, finished and
 awaiting the next instruction, or actively working — and surface it.
 
@@ -87,6 +87,13 @@ Codex is awaiting approval and POSTs as above.
 
 Copilot CLI has no notification/hook mechanism, so it relies on the screen scan
 alone — which is zero-config and needs no wiring.
+
+### oh-my-pi (omp)
+
+Works off the screen scan with no wiring. If you want exact signals, omp's
+extension API (`omp --hook <file>`) emits `tool_approval_requested` /
+`tool_approval_resolved` and `session_stop`, which map onto `waiting` and
+`idle`; POST them as above from a `pi.on(...)` handler.
 
 ## API
 

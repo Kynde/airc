@@ -69,6 +69,28 @@ const CODEX_WAITING = /Press enter to confirm|Would you like to (?:run|apply|pro
 const CODEX_READY = /·\s*Ready\s*·/;
 const CODEX_CHROME = /OpenAI Codex|·\s*(?:Ready|Working)\s*·/;
 
+// --- oh-my-pi (omp) --------------------------------------------------------
+// busy:    the working line carries a bracketed interrupt hint, e.g.
+//            "⠋ Working… ⟦esc⟧"  /  "⠸ Merging PR 4477 and confirming ⟦esc⟧"
+//          The status text is whatever the agent is doing, so the hint is the
+//          only fixed part. Its brackets follow omp's `symbolPreset` setting —
+//          ⟦⟧ (unicode), ⟨⟩ (nerdfont) or [] (ascii) — so all three count. A
+//          command run from the "!" shell prefix uses a different loader,
+//          "⠇ Running… (esc to cancel)", which is equally busy.
+// waiting: every blocking prompt — tool approval, plan review, the ask tool,
+//          an extension's own dialog — renders through one selector, whose
+//          help line is invariant across all of them. Tool approvals title the
+//          box "Allow tool: <name>" over the "❯ Approve / Deny" options.
+// idle:    the composer, under a status line that opens with omp's π mark
+//          ("pi" under the ascii preset) — the one piece of the configurable
+//          status line that every preset keeps.
+// NOTE: the approval box's "❯ Approve" line also trips CLAUDE_PROMPT, so this
+// detector must sit ahead of Claude in DETECTORS (see the copilot note above).
+const OMP_BUSY = /[⟦⟨[]esc[⟧⟩\]]|\(esc to cancel\)/;
+const OMP_WAITING = /up\/down navigate\s+enter (?:select|toggle)|^\s*Allow tool:\s/m;
+const OMP_STATUS = /[╭.][─-]{2,}\s*(?:π|pi)\s/;
+const OMP_CHROME = /omp v\d|[⟦⟨[]esc[⟧⟩\]]|up\/down navigate\s+enter (?:select|toggle)|^\s*Allow tool:\s/m;
+
 const DETECTORS = [
   {
     // Ahead of Claude on purpose: Copilot's "❯ 1. Yes" approval menu matches
@@ -79,6 +101,20 @@ const DETECTORS = [
       if (COPILOT_WAITING.test(text)) return STATE.WAITING;
       if (COPILOT_BUSY.test(text)) return STATE.BUSY;
       if (COPILOT_READY.test(text)) return STATE.IDLE_INPUT;
+      return STATE.NONE;
+    },
+  },
+  {
+    // Ahead of Claude for the same reason Copilot is: omp's approval box lists
+    // its options behind "❯", which CLAUDE_PROMPT reads as an idle composer.
+    name: "omp",
+    matches: ({ command, text }) => command === "omp" || OMP_CHROME.test(text) || OMP_STATUS.test(text),
+    classify: ({ text }) => {
+      // Waiting first: the selector opens mid-turn, so the working line above
+      // it can still be on screen while the agent is blocked on the answer.
+      if (OMP_WAITING.test(text)) return STATE.WAITING;
+      if (OMP_BUSY.test(text)) return STATE.BUSY;
+      if (OMP_STATUS.test(text)) return STATE.IDLE_INPUT;
       return STATE.NONE;
     },
   },

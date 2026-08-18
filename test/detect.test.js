@@ -24,6 +24,9 @@ const CASES = [
   { name: "codex-waiting", command: "codex", agent: "codex", state: STATE.WAITING },
   { name: "codex-busy", command: "codex", agent: "codex", state: STATE.BUSY },
   { name: "codex-idle", command: "codex", agent: "codex", state: STATE.IDLE_INPUT },
+  { name: "omp-waiting", command: "omp", agent: "omp", state: STATE.WAITING },
+  { name: "omp-busy", command: "omp", agent: "omp", state: STATE.BUSY },
+  { name: "omp-idle", command: "omp", agent: "omp", state: STATE.IDLE_INPUT },
   { name: "copilot-waiting", command: "copilot", agent: "copilot", state: STATE.WAITING },
   { name: "copilot-busy", command: "copilot", agent: "copilot", state: STATE.BUSY },
   { name: "copilot-idle", command: "copilot", agent: "copilot", state: STATE.IDLE_INPUT },
@@ -66,6 +69,24 @@ test("copilot recognized without command hint", () => {
   const result = detectPaneState({ text: fixture("copilot-busy"), command: "node" });
   assert.strictEqual(result.agent, "copilot");
   assert.strictEqual(result.state, STATE.BUSY);
+});
+
+test("omp recognized without command hint", () => {
+  const result = detectPaneState({ text: fixture("omp-busy"), command: "node" });
+  assert.strictEqual(result.agent, "omp");
+  assert.strictEqual(result.state, STATE.BUSY);
+});
+
+// Regression: omp's approval box lists "❯ Approve" / "  Deny", and that first
+// line is exactly Claude's idle-composer signature, so a waiting omp pane must
+// still be claimed by the omp detector (which sits ahead of claude) — including
+// when the command hint is a wrapper and can't disambiguate.
+test("omp waiting not misattributed to claude", () => {
+  for (const command of ["omp", "node"]) {
+    const result = detectPaneState({ text: fixture("omp-waiting"), command });
+    assert.strictEqual(result.agent, "omp", `agent with command=${command}`);
+    assert.strictEqual(result.state, STATE.WAITING, `state with command=${command}`);
+  }
 });
 
 // Regression: Copilot's "❯ 1. Yes" approval menu also matches Claude's chrome,

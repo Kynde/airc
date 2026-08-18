@@ -1,0 +1,33 @@
+
+╭─── omp v17.3.7 ──────────────────────────────────────────────────────────────────────────────────╮
+│                          │ Tips                                                                  │
+│      Welcome back!       │ # for prompt actions                                                  │
+│                          │ / for commands                                                        │
+│       ▀██████████▀       │ ! to run bash                                                         │
+│        ╘██    ██         │ $ to run python                                                       │
+│         ██    ██         │ ───────────────────────────────────────────────────────────────────── │
+│         ██    ██         │ LSP Servers                                                           │
+│        ▄██▄  ▄██▄        │ ● clojure-lsp .clj .cljs .cljc                                        │
+│                          │                                                                       │
+│   Claude Opus 4.8 (EU)   │                                                                       │
+│      amazon-bedrock      │                                                                       │
+│                          │ ───────────────────────────────────────────────────────────────────── │
+│                          │ Recent sessions                                                       │
+│                          │ No recent sessions                                                    │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ Tip: Please use nerdfont 😭.
+
+ Connected to MCP server: chrome-devtools.
+
+
+ Summarize notes.txt in one line
+
+
+ ⠋ Working… ⟦esc⟧
+
+╭── π  > ⬢ Opus 4.8 (EU) · ◒ high > 🗑 …6-8d0b-d130b5f19832/scratchpad/ompprobe > ◫ 1.6%/1M ⟲ ▶─────────────────────────╮
+╰─                                                                                                                    ─╯

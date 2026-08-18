@@ -1,0 +1,45 @@
+  which would have been meaningless in the repo.
+  - Committed to master. There's no remote and no other branch, so branching would have left your work somewhere you'd
+  have to merge back before continuing.
+
+  I checked the staged set for credentials before committing — the only hits were prose in ai/gotchas.md and docs/
+  mentioning sudo and ANTHROPIC_API_KEY by name, no values. config/feed-token is gitignored and stayed out.
+
+  One flag for when you pick this up: knowledge/team/roster.md is still the placeholder template, so nothing personal is
+  in git yet. Step 3 of your plan — putting the real roster in — will put the names of minors into version control.
+  Local-only with no remote today, but worth a deliberate decision before you add a remote.
+
+  To pick this up: restart your daemon (D twice in the TUI) — it's still running the old code on 8090, and first boot
+  will write config/feed-token.
+
+✻ Cooked for 1m 39s
+
+❯ q
+
+● Looks like a stray q — that's the cockpit's quit key, not a shell command. Nothing done here.
+
+  If you did mean something by it, say the word. Otherwise the work is committed at 1f33d44 and the tree is clean, so
+  this is a fine place to stop.
+
+✻ Cooked for 4s
+
+❯ Let's enter.
+
+● "Enter" on its own doesn't tell me which thing you want — and after the stray q, I suspect these are going to the
+  wrong window.
+
+  Did you mean:
+  - plan mode (I'd sketch milestone 6 or the roster work before touching code), or
+  - a worktree to isolate the next change, or
+  - an Enter keystroke meant for the TUI?
+
+  Say which and I'll go.
+
+✻ Baked for 13s
+                                                                                 new task? /clear to save 155.8k tokens
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ plan mode
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  PRO Opus 5 🔮 | 🌿 master ✔ 📁 ~/hockeytalk                                                                       /rc
+  ███░░░░░░░░░░░░░░░░░ 15% | ⏱️  156m 29s | 📊 ↑155.0K ↓731 | ⚡ 58% ↻2h16m
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

@@ -17,6 +17,10 @@ const CASES = [
   { name: "claude-busy", command: "claude", agent: "claude", state: STATE.BUSY },
   { name: "claude-busy-thinking", command: "claude", agent: "claude", state: STATE.BUSY },
   { name: "claude-idle", command: "claude", agent: "claude", state: STATE.IDLE_INPUT },
+  // Finished, but with a half-typed prompt left in the composer: still idle,
+  // still awaiting instruction. Anchoring idle on an *empty* "❯" line dropped
+  // these panes out of the attention HUD entirely.
+  { name: "claude-idle-draft", command: "claude", agent: "claude", state: STATE.IDLE_INPUT },
   { name: "codex-waiting", command: "codex", agent: "codex", state: STATE.WAITING },
   { name: "codex-busy", command: "codex", agent: "codex", state: STATE.BUSY },
   { name: "codex-idle", command: "codex", agent: "codex", state: STATE.IDLE_INPUT },

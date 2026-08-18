@@ -11,7 +11,7 @@
 // Each pane is classified into one of:
 //   "waiting"    — blocked on a permission/choice prompt (the urgent one)
 //   "busy"       — actively working; ignore
-//   "idle-input" — finished, sitting at an empty input box awaiting instruction
+//   "idle-input" — finished, sitting at the input box awaiting instruction
 //   "none"       — not a recognized agent (plain shell, pager, etc.)
 //
 // detectPaneState({ text, command }) runs the ordered detector list and returns
@@ -34,10 +34,13 @@ const STATE = Object.freeze({
 //         so the token counter is not anchored to the closing paren.
 //         (older builds showed "esc to interrupt"; kept as an alternative.)
 // waiting: a highlighted numbered menu line, e.g. "❯ 1. Yes, auto-accept edits".
-// idle:    an empty composer box — a line that is just the "❯" prompt arrow.
+// idle:    the composer box — a line opening with the "❯" prompt arrow. It need
+//          not be empty: an agent that finished and left a half-typed prompt
+//          sitting there is still awaiting instruction, and anchoring on an
+//          empty box dropped those panes out of the HUD entirely.
 const CLAUDE_BUSY = /\(\d+m?\s*\d*s\s*·[^)]*tokens?\b|esc to interrupt/;
 const CLAUDE_MENU = /❯\s+\d+\.\s/;
-const CLAUDE_PROMPT = /^\s*❯\s*$/m;
+const CLAUDE_PROMPT = /^\s*❯(?:\s|$)/m;
 // Distinctive chrome for command-less identification (the model/footer lines).
 const CLAUDE_CHROME = /accept edits on|shift\+tab to cycle|❯\s+\d+\.\s/;
 

@@ -11,7 +11,7 @@ const zlib = require("node:zlib");
 
 const { ansiToHtml } = require("./ansi");
 const { authLevel, authCookie, tokenEquals } = require("./auth");
-const { loadConfig, bookmarkUrl, pairingPayload, localLanAddresses } = require("./config");
+const { loadConfig, bookmarkUrl, pairingPayload, localLanAddresses, advertisedUrl, tunnelUrl } = require("./config");
 const dais = require("./dais");
 const { detectPaneState, STATE } = require("./detect");
 const { startNgrok } = require("./ngrok");
@@ -902,9 +902,21 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
   // The tunnel's live status, or a fixed "disabled" report when ngrok is off, so
   // callers don't each spell out the empty shape.
   function ngrokReport() {
-    return config.ngrok.enabled
+    return config.tunnels.ngrok.enabled
       ? ngrokStatus()
       : { running: false, url: "", uptimeMs: 0, restarts: 0, lastError: "disabled" };
+  }
+
+  // Every configured route in precedence order, with the advertised one named.
+  // Only ngrok carries live state (running/restarts/lastError) — airc doesn't
+  // run the others, so "enabled" is the whole truth it has about them.
+  function tunnelsReport(liveNgrokUrl) {
+    const routes = config.tunnels.prefer.map((name) => ({
+      name,
+      enabled: Boolean(config.tunnels[name].enabled),
+      url: tunnelUrl(config, name, liveNgrokUrl),
+    }));
+    return { advertised: routes.find((route) => route.url)?.name || "", routes };
   }
 
   async function handleHealthz(response) {
@@ -922,7 +934,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     const tmuxOk = liveSessions.length > 0;
     const ngrok = ngrokReport();
     sendJson(response, 200, {
-      ok: tmuxOk && (!config.ngrok.enabled || (ngrok.running && ngrok.url !== "")),
+      ok: tmuxOk && (!config.tunnels.ngrok.enabled || (ngrok.running && ngrok.url !== "")),
       session: config.session,
       sessions: config.sessions,
       liveSessions,
@@ -930,12 +942,12 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       lastCaptureAgeMs: stats.lastCaptureAt === 0 ? null : now - stats.lastCaptureAt,
       lastInputAgeMs: stats.lastInputAt === 0 ? null : now - stats.lastInputAt,
       viewersLastMin: stats.viewers.size,
-      // The address clients should actually use: an external tunnel when one is
-      // configured, else whatever ngrok currently reports. tools/airc reads this
-      // for pairing output, which must not fall back to the ngrok URL while a
-      // publicUrl is set.
+      // The address clients should actually use: the top-ranked tunnel that can
+      // name a URL. tools/airc reads this for pairing output, which must not
+      // fall back to the ngrok URL while a higher-ranked tunnel is configured.
       publicUrl: currentPublicUrl() || ngrok.url || "",
       ngrok,
+      tunnels: tunnelsReport(ngrok.url),
       uptimeMs: now - startedAt,
     });
   }
@@ -947,9 +959,10 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       serverVersion: SERVER_VERSION,
       publicUrl: currentPublicUrl() || ngrok.url || "",
       ngrok: {
-        enabled: Boolean(config.ngrok.enabled),
+        enabled: Boolean(config.tunnels.ngrok.enabled),
         ...ngrok,
       },
+      tunnels: tunnelsReport(ngrok.url),
       battery: readBatteryStatus(),
     };
   }
@@ -1387,7 +1400,8 @@ Options:
   --host HOST      address to bind (use 0.0.0.0 for same-WLAN phones)
   --port PORT      port to listen on
   --config PATH    config file (default <repo>/config.json)
-  --no-ngrok       do not start ngrok
+  --no-ngrok       do not start ngrok (other tunnels stay advertised)
+  --no-tunnels     advertise no tunnel at all; LAN/loopback only
   --no-tls         do not serve HTTPS / generate a self-signed cert (HTTP only)
   --print-url      print the browser URL with token and exit
   --pair           print Android pairing JSON and exit
@@ -1421,11 +1435,18 @@ function main() {
   }
 
   let ngrok = null;
-  // A configured external tunnel is the advertised address from the first
-  // request on; ngrok, if enabled, only fills this in when nothing else has.
-  let publicUrl = config.publicUrl || "";
+  // The advertised address is resolved per call from config.tunnels rather than
+  // latched at startup: the only part that isn't known up front is the live
+  // ngrok URL, which lands here when the agent reports it.
+  let ngrokLiveUrl = "";
+  const currentPublicUrl = () => advertisedUrl(config, ngrokLiveUrl);
   const ngrokStatus = () => (ngrok ? ngrok.status() : { running: false, url: "", uptimeMs: 0, restarts: 0, lastError: "" });
-  const server = makeServer(config, ngrokStatus, () => publicUrl, tls);
+  const server = makeServer(config, ngrokStatus, currentPublicUrl, tls);
+  const announce = () => {
+    const publicUrl = currentPublicUrl();
+    log(`bookmark: ${bookmarkUrl(config, "view", publicUrl)}`);
+    log(`pairing: ${JSON.stringify(pairingPayload(config, publicUrl, tls))}`);
+  };
 
   server.listen(config.port, config.host, () => {
     log(`airc tmux remote listening on http://${config.host}:${config.port} (sessions: ${config.sessions.join(", ")})`);
@@ -1435,17 +1456,15 @@ function main() {
       const present = dais.status(config).available ? "" : " — daemon not running yet";
       log(`dais dictation enabled (socket: ${dais.socketPath(config)}${present})`);
     }
-    if (config.ngrok.enabled) {
-      ngrok = startNgrok({ ...config.ngrok, port: config.port }, log, (url) => {
-        if (!config.publicUrl) {
-          publicUrl = url;
-        }
-        log(`bookmark: ${bookmarkUrl(config, "view", publicUrl)}`);
-        log(`pairing: ${JSON.stringify(pairingPayload(config, publicUrl, tls))}`);
+    announce();
+    if (config.tunnels.ngrok.enabled) {
+      // Re-announce once the agent reports: with a reserved domain the URL is
+      // the one already logged above, but a non-reserved one is only knowable
+      // here — and either way it's the line that says the tunnel came up.
+      ngrok = startNgrok({ ...config.tunnels.ngrok, port: config.port }, log, (url) => {
+        ngrokLiveUrl = url;
+        announce();
       });
-    } else {
-      log(`bookmark: ${bookmarkUrl(config, "view")}`);
-      log(`pairing: ${JSON.stringify(pairingPayload(config, "", tls))}`);
     }
   });
 

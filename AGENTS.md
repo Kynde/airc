@@ -26,7 +26,7 @@ Code wins on conflict: if a fact there is stale, fix the file.
 Important behavior:
 
 - Airc defaults to port `8080`.
-- `tools/airc local` prepends `--host 0.0.0.0 --no-ngrok`.
+- `tools/airc local` prepends `--host 0.0.0.0 --no-tunnels`.
 - Pairing payloads in local mode should prefer LAN URLs over `127.0.0.1`.
 - Auth uses `viewToken` and `controlToken`; permissions come from the token.
 - Browser UI reads `canControl` from `/api/config`; the backend still enforces
@@ -35,7 +35,11 @@ Important behavior:
 - `tools/airc pair-web` prints a browser URL with the view token.
 - `tools/airc pair-web-control` prints a browser URL with the control token.
 - The Android app stores LAN and public URLs, tries LAN first, and falls back to
-  public/ngrok.
+  the public/tunnel URL.
+- Tunnels are configured under `tunnels` in `config.json` (`ngrok`, `tailscale`,
+  `external`), each with its own `enabled` flag; `tunnels.prefer` decides which
+  one is advertised. Only ngrok is supervised by airc. Legacy top-level `ngrok`
+  and `publicUrl` keys still load.
 - The app follows the active pane unless the user pins a pane.
 - Browser controls follow the currently viewed pane.
 - Text input goes through `tmux send-keys -l`; named quick keys go through

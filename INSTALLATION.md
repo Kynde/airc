@@ -58,7 +58,7 @@ tools/airc pair-web
 ```
 
 `tools/airc local` is shorthand for starting the server with `--host 0.0.0.0
---no-ngrok`, i.e. reachable on your LAN with no tunnel. See
+--no-tunnels`, i.e. reachable on your LAN with no tunnel. See
 [docs/operations.md](docs/operations.md) for the rest of the runtime commands.
 
 ### config.json keys worth knowing
@@ -74,25 +74,38 @@ tools/airc pair-web
 | `tls.port` | `8443` | HTTPS port the Android app connects to. |
 | `dais.enabled` | `false` | Show the voice-dictation mic button ([docs/dais.md](docs/dais.md)). Off by default because with it on, the control token can also open the laptop's **microphone**. |
 | `dais.socket` | `""` | Path to the dais control socket; empty means `$XDG_RUNTIME_DIR/dais/control.sock`. Must be absolute. |
-| `publicUrl` | `""` | Public address of a tunnel **you** run (Tailscale Funnel, Cloudflare Tunnel, a reverse proxy). Airc doesn't start it — it just advertises this in bookmarks and the pairing QR. Takes precedence over `ngrok.domain`. |
-| `ngrok.enabled` | `false` | Start a tunnel? Off by default — see below. |
-| `ngrok.domain` | placeholder | Your reserved ngrok domain. |
+| `tunnels.prefer` | `["ngrok", "tailscale", "external"]` | Which tunnel gets advertised, best first. Enabling several is fine — they all keep working; this only picks the one that goes into bookmarks and the pairing QR. |
+| `tunnels.ngrok.enabled` | `false` | Start and supervise an ngrok agent? Off by default — see below. |
+| `tunnels.ngrok.domain` | placeholder | Your reserved ngrok domain. |
+| `tunnels.tailscale.enabled` / `.url` | `false` / `""` | A [Tailscale Funnel](#public-access-with-an-external-tunnel) **you** brought up. Airc doesn't start it — it just advertises the URL. |
+| `tunnels.external.enabled` / `.url` | `false` / `""` | Any other tunnel you run yourself: Cloudflare Tunnel, Caddy, `ssh -R`. Same deal — URL only. |
+
+> Configs written before tunnels were grouped still load: a top-level `ngrok`
+> block becomes `tunnels.ngrok`, and a top-level `publicUrl` becomes
+> `tunnels.external.url` — keeping its old precedence over ngrok, so upgrading
+> never silently re-points an existing pairing.
 
 ## Public access with an external tunnel
 
 LAN mode only reaches devices on the same Wi-Fi. To view from mobile data,
 another network, or a car on the road, run Airc behind a public tunnel.
 
-If you already run a tunnel — or want one Airc doesn't manage — set `publicUrl`
-and Airc will advertise that address everywhere it prints a link. It never starts
-or supervises the tunnel; that stays your job (a systemd unit, the tunnel's own
-background mode, whatever you prefer).
+If you already run a tunnel — or want one Airc doesn't manage — give it a URL
+under `tunnels` and Airc will advertise that address everywhere it prints a
+link. It never starts or supervises the tunnel; that stays your job (a systemd
+unit, the tunnel's own background mode, whatever you prefer).
 
 ```json
 {
-  "publicUrl": "https://your-host.example.ts.net"
+  "tunnels": {
+    "tailscale": { "enabled": true, "url": "https://your-host.example.ts.net" }
+  }
 }
 ```
+
+`tailscale` and `external` behave identically — the split is just so a Funnel
+URL and, say, a Cloudflare one can both sit in the config and be swapped by
+reordering `prefer`, without deleting either.
 
 Any scheme works as long as it terminates TLS and proxies to Airc's HTTP port.
 **[Tailscale Funnel](https://tailscale.com/kb/1223/funnel)** is a good free
@@ -147,11 +160,13 @@ ngrok config add-authtoken <YOUR_AUTHTOKEN>
 
 ```json
 {
-  "ngrok": {
-    "enabled": true,
-    "domain": "your-name-1234.ngrok-free.dev",
-    "binary": "ngrok",
-    "apiUrl": "http://127.0.0.1:4040"
+  "tunnels": {
+    "ngrok": {
+      "enabled": true,
+      "domain": "your-name-1234.ngrok-free.dev",
+      "binary": "ngrok",
+      "apiUrl": "http://127.0.0.1:4040"
+    }
   }
 }
 ```
@@ -180,11 +195,36 @@ not run `ngrok` separately.
 - If the tunnel doesn't come up, check the log:
   `tail -f "$(tools/airc logs)"`.
 
+## Running more than one tunnel
+
+Nothing stops several tunnels being enabled at once — each one that's up still
+reaches the server. `tunnels.prefer` decides which URL gets baked into bookmarks
+and pairing payloads; the rest are unadvertised routes you (or an
+already-paired app) can still use.
+
+```json
+{
+  "tunnels": {
+    "prefer": ["ngrok", "tailscale", "external"],
+    "ngrok": { "enabled": true, "domain": "your-name-1234.ngrok-free.dev" },
+    "tailscale": { "enabled": true, "url": "https://your-host.example.ts.net" }
+  }
+}
+```
+
+That config advertises ngrok and keeps Funnel as a spare: swap the first two
+entries in `prefer` to flip it, with no other edit. Bookmarks and QR payloads
+change on the next restart, so re-pair (or let the app pick the new URL up on
+its next `/api/config` refresh) after a swap.
+
+`--no-ngrok` skips starting the agent but leaves the other tunnels advertised;
+`--no-tunnels` (what `tools/airc local` passes) advertises none of them.
+
 ## LAN and tunnel at the same time
 
 Handy if you want the phone/app to use a fast direct LAN connection at home and
 the tunnel only when you're away. The server has to bind a non-loopback address
-**and** keep ngrok enabled:
+**and** keep a tunnel enabled:
 
 ```sh
 tools/airc on --host 0.0.0.0

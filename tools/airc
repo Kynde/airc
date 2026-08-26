@@ -19,7 +19,7 @@ function usage(exitCode = 0) {
 
 Commands:
   on [server args]       start the tmux remote server using config defaults
-  local [server args]    start for same-WLAN phone access (--host 0.0.0.0 --no-ngrok)
+  local [server args]    start for same-WLAN phone access (--host 0.0.0.0 --no-tunnels)
   off                    stop the background server
   restart [server args]  stop then start
   status [--json]        show process and /healthz state
@@ -160,7 +160,7 @@ function load(argv = []) {
 
 async function cmdOn(extraArgs, mode = "on") {
   const serverArgs = mode === "local"
-    ? ["--host", "0.0.0.0", "--no-ngrok", ...extraArgs]
+    ? ["--host", "0.0.0.0", "--no-tunnels", ...extraArgs]
     : extraArgs;
   const config = load(serverArgs);
   const pid = activePid();
@@ -195,7 +195,7 @@ async function cmdOn(extraArgs, mode = "on") {
       process.exit(1);
     }
     health = await healthz(config);
-    if (health && (!config.ngrok.enabled || health.ngrok.url)) {
+    if (health && (!config.tunnels.ngrok.enabled || health.ngrok.url)) {
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -206,7 +206,7 @@ async function cmdOn(extraArgs, mode = "on") {
     process.exit(1);
   }
   console.log(`airc: on (pid ${child.pid}, sessions: ${sessionLabel(health)})`);
-  if (config.ngrok.enabled && !health.ngrok.url) {
+  if (config.tunnels.ngrok.enabled && !health.ngrok.url) {
     console.error(`airc: tunnel not up yet; see ${LOG_FILE}`);
     process.exit(1);
   }
@@ -270,9 +270,11 @@ async function cmdStatus(json) {
     `airc: ${health.ok ? "on" : "on (degraded)"}`,
     `pid: ${pid}`,
     `sessions: ${sessionLabel(health)}`,
-    `public: ${health.publicUrl || health.ngrok.url || "none"}`,
+    // Name the tunnel the public URL belongs to: with several configured, which
+    // one is currently fronting the server is the thing worth seeing at a glance.
+    `public: ${health.publicUrl || health.ngrok.url || "none"}${health.tunnels?.advertised ? ` (${health.tunnels.advertised})` : ""}`,
     // Only worth a column when ngrok is up but not the advertised route, i.e.
-    // it's running as a fallback behind a configured publicUrl.
+    // it's running as a fallback behind a higher-ranked tunnel.
     ...(health.ngrok.url && health.ngrok.url !== health.publicUrl ? [`ngrok: ${health.ngrok.url}`] : []),
     `viewers: ${health.viewersLastMin}`,
     `log: ${LOG_FILE}`,

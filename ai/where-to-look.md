@@ -10,8 +10,10 @@ add/raise auth :: src/auth.js authLevel + presentedToken # token sources and lev
 change a tmux command :: src/tmux.js # every tmux invocation is execFile("tmux", [...]) with array args (no shell); add new ones the same way
 ANSI/color rendering :: src/ansi.js ansiToHtml # SGR → spans; everything else stripped. Hand-rolled escaper — the XSS boundary for pane content
 config defaults / CLI flags / token gen :: src/config.js DEFAULTS + parseArgs + loadConfig # tokens are generated and PERSISTED back to config.json on first load
+which tunnel gets advertised :: src/config.js normalizeTunnels + tunnelUrl + advertisedUrl # config.tunnels.prefer order decides; legacy top-level `ngrok`/`publicUrl` are migrated here (and keep their old publicUrl-beats-ngrok precedence). Tests: test/tunnels.test.js
 pairing/bookmark URL shape :: src/config.js pairingPayload + bookmarkUrl # version 2 payload; LAN-vs-public preference logic
-ngrok supervision :: src/ngrok.js startNgrok # spawns the agent, polls 127.0.0.1:4040 for the tunnel URL, backs off and restarts on exit
+ngrok supervision :: src/ngrok.js startNgrok # spawns the agent, polls 127.0.0.1:4040 for the tunnel URL, backs off and restarts on exit. The ONLY tunnel airc runs — tailscale/external are URL-only entries
+tunnel state in /healthz + /api/status :: src/server.js ngrokReport + tunnelsReport # `ngrok` stays the supervised agent's live state; `tunnels` lists every route in prefer order with the advertised one named
 attention detection signatures :: src/detect.js DETECTORS # per-agent TUI regexes; the version-fragile bit — change here when an agent's UI drifts
 attention scan/debounce/HUD state :: src/server.js scanAttention + applyScreenState + attentionItems # screen vs hook precedence, debounce, ranking
 agent hook intake :: src/server.js handleAgentEvent (`POST /api/agent/event`) # control-gated; maps coarse event → state, trusted for HOOK_TTL_MS
@@ -48,6 +50,6 @@ app id / version :: android-app/app/build.gradle.kts # applicationId dev.airc.tm
 ## Build / test
 
 syntax check :: npm run check (= node scripts/check.js) # `node --check` over src/ + public/ ONLY — does NOT run the unit tests
-unit tests :: node --test 'test/*.test.js' # detect.js fixtures + test/dais.test.js (fake ndjson daemon on a temp Unix socket); not wired into `npm run check` or any npm script
+unit tests :: node --test 'test/*.test.js' # detect.js fixtures + test/dais.test.js (fake ndjson daemon on a temp Unix socket) + test/tunnels.test.js (config precedence/migration); not wired into `npm run check` or any npm script
 android build/install :: make build / make push / make deploy # APK modeled as a file target; rebuilds only when sources changed
 release :: /release <patch|minor|major> or .claude/skills/release # tag is source of truth, v-prefixed; bumps package.json, gh release, fetch tag back

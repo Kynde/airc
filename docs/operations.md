@@ -27,14 +27,21 @@ tools/airc pair-web
 Narrow the scope with `--session NAME` (repeatable) when you want Airc to see
 only some sessions — for example `tools/airc local --session work --session ops`.
 
-`tools/airc local` prepends `--host 0.0.0.0 --no-ngrok`. Use `tools/airc on`
-when the configured ngrok tunnel should be started by the server; ngrok ships
-disabled (`ngrok.enabled: false`), so `on` is a no-tunnel local run until you
-enable and configure it.
+`tools/airc local` prepends `--host 0.0.0.0 --no-tunnels`, so no tunnel is
+advertised even when one is configured. Use `tools/airc on` when the configured
+tunnels should be used (and the ngrok agent started by the server); every tunnel
+ships disabled, so `on` is a no-tunnel local run until you enable one.
 
-To serve **both** LAN and ngrok at once (so a phone uses a direct LAN connection
-at home and the tunnel away), the server must bind a non-loopback address while
-ngrok stays enabled. `host` defaults to `127.0.0.1`, which only ngrok can reach
+Which tunnel gets advertised is `tunnels.prefer`, best first — the rest stay
+reachable, just not what bookmarks and pairing payloads point at. `tools/airc
+status` names the winner in its `public:` column. Flipping the preference is a
+`prefer` reorder plus a restart; `--no-ngrok` drops just the ngrok agent and
+lets the next tunnel down the list take over.
+
+To serve **both** LAN and a tunnel at once (so a phone uses a direct LAN
+connection at home and the tunnel away), the server must bind a non-loopback
+address while the tunnel stays enabled. `host` defaults to `127.0.0.1`, which
+only a tunnel can reach
 (it dials `localhost` on the laptop) — the LAN interface is left unbound, so
 same-WLAN phones get connection-refused. Set `"host": "0.0.0.0"` in
 `config.json` (or pass `--host 0.0.0.0` to `tools/airc on`) so the LAN interface
@@ -85,9 +92,9 @@ In local mode, QR payloads should use a LAN URL such as `http://10.x.x.x:8080`.
 If the phone saves `127.0.0.1`, re-pair from `tools/airc local ...`; on Android,
 `127.0.0.1` means the phone itself.
 
-For Android fallback between LAN and public/ngrok access, pair while the payload
+For Android fallback between LAN and public/tunnel access, pair while the payload
 contains both URL families. If the app was paired from `tools/airc local`, it may
-only know LAN URLs because local mode disables ngrok.
+only know LAN URLs because local mode disables every tunnel.
 
 ## App Usage
 

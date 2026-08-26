@@ -20,7 +20,8 @@ _airc_server_args() {
     '*--session[tmux session]:session:_airc_sessions' \
     '*--tmux-target[tmux target (alias of --session)]:target:_airc_sessions' \
     '--config[path to config.json]:config file:_files' \
-    '--no-ngrok[disable the ngrok tunnel]' \
+    '--no-ngrok[do not start ngrok; other tunnels stay advertised]' \
+    '--no-tunnels[advertise no tunnel at all; LAN/loopback only]' \
     '--no-tls[disable HTTPS; serve HTTP only]' \
     '--print-url[print the URL and exit]' \
     '--pair[print pairing info]' \
@@ -33,7 +34,7 @@ _airc() {
 
   local -a subcommands=(
     'on:start the tmux remote server using config defaults'
-    'local:start for same-WLAN phone access (--host 0.0.0.0 --no-ngrok)'
+    'local:start for same-WLAN phone access (--host 0.0.0.0 --no-tunnels)'
     'off:stop the background server'
     'restart:stop then start'
     'status:show process and /healthz state'

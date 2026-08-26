@@ -20,12 +20,15 @@ server frame/input APIs.
 Runtime paths:
 
 ```text
-Android app -> LAN URL or ngrok URL -> Node server -> tmux
-Browser/Tesla -> ngrok URL -> Node server -> tmux
+Android app -> LAN URL or tunnel URL -> Node server -> tmux
+Browser/Tesla -> tunnel URL -> Node server -> tmux
 ```
 
-The server can supervise ngrok when `ngrok.enabled` is true. `tools/airc` itself
-is not systemd-backed; it starts a detached Node process and tracks pid/state/log
+Tunnels are configured under `tunnels` in `config.json` — `ngrok`, `tailscale`
+and `external`, each with its own `enabled` flag — and `tunnels.prefer` orders
+which one is advertised. The server supervises the ngrok agent when
+`tunnels.ngrok.enabled` is true; the other two are URLs it only advertises.
+`tools/airc` itself is not systemd-backed; it starts a detached Node process and tracks pid/state/log
 files.
 
 ## Ports And Pairing
@@ -41,15 +44,15 @@ tools/airc local
 This prepends:
 
 ```sh
---host 0.0.0.0 --no-ngrok
+--host 0.0.0.0 --no-tunnels
 ```
 
 Pairing payload behavior:
 
-- ngrok mode: `baseUrl` is the configured/public ngrok URL.
+- tunnel mode: `baseUrl` is the advertised tunnel's URL.
 - local mode: `baseUrl` prefers the first LAN URL.
 - `lanUrls` and `publicUrl` are included so Android can try LAN first and fall
-  back to ngrok/public access.
+  back to the tunnel.
 - Browser pairing commands print QR/URL/token values instead of Android JSON.
 - `pair-app` uses `controlToken`.
 - `pair-web` uses `viewToken`.
@@ -98,8 +101,10 @@ private surface.
 `GET /api/config` also returns non-secret URL metadata (`publicUrl`, `lanUrls`)
 for clients.
 
-`GET /api/status` returns live ngrok/public-tunnel status and local battery
-summary for the browser dashboard.
+`GET /api/status` returns live tunnel status and local battery summary for the
+browser dashboard: `ngrok` is the supervised agent's own state, and `tunnels`
+lists every configured route in preference order with the advertised one named
+(`/healthz` carries the same `tunnels` block).
 
 Input payloads:
 

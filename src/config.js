@@ -35,19 +35,30 @@ const DEFAULTS = {
     debounceScans: 2,
     maxPanes: 24,
   },
-  // An externally managed tunnel (Tailscale Funnel, Cloudflare Tunnel, a
-  // reverse proxy) fronting this server. airc neither starts nor supervises it;
-  // it only needs the URL so bookmarks, the pairing QR and /api/config advertise
-  // the reachable address instead of a LAN one. Takes precedence over ngrok.
-  publicUrl: "",
-  ngrok: {
-    // Off by default: the zero-setup path is LAN/browser access, which needs no
-    // account. Set enabled:true (and a real domain) only after configuring ngrok
-    // for away-from-home access. See INSTALLATION.md.
-    enabled: false,
-    domain: "your-domain.ngrok-free.dev",
-    binary: "ngrok",
-    apiUrl: "http://127.0.0.1:4040",
+  // The tunnels that can front this server. Enabling several is normal: they
+  // all keep reaching the server, and `prefer` only decides which one gets
+  // baked into bookmarks and pairing payloads (first entry that can name a URL
+  // wins). Only ngrok is supervised by airc — it spawns and restarts the agent;
+  // the others are routes someone else keeps up, so airc just needs the URL.
+  // The legacy top-level `ngrok` block and `publicUrl` string still load: see
+  // normalizeTunnels().
+  tunnels: {
+    prefer: ["ngrok", "tailscale", "external"],
+    ngrok: {
+      // Off by default: the zero-setup path is LAN/browser access, which needs
+      // no account. Set enabled:true (and a real domain) only after configuring
+      // ngrok for away-from-home access. See INSTALLATION.md.
+      enabled: false,
+      domain: "your-domain.ngrok-free.dev",
+      binary: "ngrok",
+      apiUrl: "http://127.0.0.1:4040",
+    },
+    // Tailscale Funnel, brought up out-of-band with `tailscale funnel --bg PORT`
+    // (which prints the https://<host>.ts.net URL to paste here).
+    tailscale: { enabled: false, url: "" },
+    // Any other tunnel or reverse proxy you run yourself — Cloudflare Tunnel,
+    // Caddy, `ssh -R`. Also where a legacy top-level `publicUrl` lands.
+    external: { enabled: false, url: "" },
   },
   // Voice dictation through dais (the local voice daemon): a mic button in the
   // control bar records and types the transcript into the pane you're viewing.
@@ -89,6 +100,8 @@ function parseArgs(argv) {
       index += 1;
     } else if (item === "--no-ngrok") {
       args.noNgrok = true;
+    } else if (item === "--no-tunnels") {
+      args.noTunnels = true;
     } else if (item === "--no-tls") {
       args.noTls = true;
     } else if (item === "--print-url") {
@@ -170,6 +183,100 @@ function ensureTlsMaterials(config, warnings) {
   }
 }
 
+const TUNNEL_NAMES = ["ngrok", "tailscale", "external"];
+
+// Trailing slashes would produce "https://host//?k=..." in every bookmark and
+// pairing payload, so normalize once at load — and reject a bare hostname here
+// rather than at the first tap on a dead bookmark.
+function normalizeTunnelUrl(value, label) {
+  const url = typeof value === "string" ? value.trim().replace(/\/+$/, "") : "";
+  if (url && !/^https?:\/\//.test(url)) {
+    throw new Error(`${label} must start with http:// or https://`);
+  }
+  return url;
+}
+
+// Build config.tunnels from the file, accepting both the current `tunnels`
+// block and the legacy shape it replaced (a top-level `ngrok` object plus a
+// `publicUrl` string). A legacy file also keeps its old precedence — publicUrl
+// used to outrank ngrok — so upgrading airc never silently re-points an
+// existing pairing at a different tunnel. Configs that opt into `tunnels` get
+// the new default order, ngrok first.
+function normalizeTunnels(fileConfig) {
+  const file = fileConfig.tunnels || {};
+  const legacyPublicUrl = normalizeTunnelUrl(fileConfig.publicUrl, "publicUrl");
+  const tunnels = {
+    // A legacy top-level `ngrok` merges under an explicit tunnels.ngrok, so a
+    // half-migrated file resolves to the block that was written last.
+    ngrok: { ...DEFAULTS.tunnels.ngrok, ...(fileConfig.ngrok || {}), ...(file.ngrok || {}) },
+    tailscale: { ...DEFAULTS.tunnels.tailscale, ...(file.tailscale || {}) },
+    external: { ...DEFAULTS.tunnels.external, ...(file.external || {}) },
+  };
+  if (legacyPublicUrl && !tunnels.external.url) {
+    tunnels.external = { enabled: true, url: legacyPublicUrl };
+  }
+  for (const name of TUNNEL_NAMES) {
+    tunnels[name].enabled = Boolean(tunnels[name].enabled);
+    if (name !== "ngrok") {
+      tunnels[name].url = normalizeTunnelUrl(tunnels[name].url, `tunnels.${name}.url`);
+    }
+  }
+
+  const prefer = Array.isArray(file.prefer)
+    ? file.prefer
+    : (legacyPublicUrl ? ["external", ...DEFAULTS.tunnels.prefer] : DEFAULTS.tunnels.prefer);
+  tunnels.prefer = [];
+  for (const name of prefer) {
+    if (!TUNNEL_NAMES.includes(name)) {
+      throw new Error(`tunnels.prefer: unknown tunnel "${name}" (known: ${TUNNEL_NAMES.join(", ")})`);
+    }
+    if (!tunnels.prefer.includes(name)) {
+      tunnels.prefer.push(name);
+    }
+  }
+  // A partial `prefer` ranks the rest last rather than hiding them: an enabled
+  // tunnel left off the list is still a route, just the least preferred one.
+  for (const name of TUNNEL_NAMES) {
+    if (!tunnels.prefer.includes(name)) {
+      tunnels.prefer.push(name);
+    }
+  }
+  return tunnels;
+}
+
+// The URL a tunnel would advertise, or "" when it is off or can't name one.
+// ngrok's reserved domain is known before the agent is up, so it can be
+// advertised from the first request; `liveNgrokUrl` (what the agent actually
+// reports) replaces it once known — the two differ only without a reserved
+// domain.
+function tunnelUrl(config, name, liveNgrokUrl = "") {
+  const tunnel = config.tunnels[name];
+  if (!tunnel || !tunnel.enabled) {
+    return "";
+  }
+  if (name === "ngrok") {
+    return liveNgrokUrl || (tunnel.domain ? `https://${tunnel.domain}` : "");
+  }
+  return tunnel.url;
+}
+
+// The advertised route: the first tunnel in `prefer` that can name a URL. The
+// others stay perfectly reachable — they're just not what bookmarks, the
+// pairing QR and /api/config point at.
+function advertisedUrl(config, liveNgrokUrl = "") {
+  for (const name of config.tunnels.prefer) {
+    const url = tunnelUrl(config, name, liveNgrokUrl);
+    if (url) {
+      return url;
+    }
+  }
+  return "";
+}
+
+function anyTunnelEnabled(config) {
+  return TUNNEL_NAMES.some((name) => config.tunnels[name].enabled);
+}
+
 // Accept a string, an array, or a mix and produce a de-duplicated, non-empty
 // list of session names. Order is preserved; the first entry is the primary.
 function normalizeSessions(...sources) {
@@ -196,14 +303,23 @@ function loadConfig(argv) {
   const config = {
     ...DEFAULTS,
     ...fileConfig,
-    ngrok: { ...DEFAULTS.ngrok, ...(fileConfig.ngrok || {}) },
+    tunnels: normalizeTunnels(fileConfig),
     attention: { ...DEFAULTS.attention, ...(fileConfig.attention || {}) },
     dais: { ...DEFAULTS.dais, ...(fileConfig.dais || {}) },
     tls: { ...DEFAULTS.tls, ...(fileConfig.tls || {}) },
   };
+  // publicUrl is a file-level alias for tunnels.external.url (see
+  // normalizeTunnels); drop the raw key so nothing reads it as a second,
+  // stale source of the advertised address.
+  delete config.publicUrl;
   if (args.host !== undefined) config.host = args.host;
   if (args.port !== undefined) config.port = args.port;
-  if (args.noNgrok) config.ngrok = { ...config.ngrok, enabled: false };
+  if (args.noNgrok) config.tunnels.ngrok = { ...config.tunnels.ngrok, enabled: false };
+  if (args.noTunnels) {
+    for (const name of TUNNEL_NAMES) {
+      config.tunnels[name] = { ...config.tunnels[name], enabled: false };
+    }
+  }
   if (args.noTls) config.tls = { ...config.tls, enabled: false };
 
   // sessions[] is canonical, resolved by precedence (not merged): CLI --session
@@ -219,13 +335,6 @@ function loadConfig(argv) {
 
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) {
     throw new Error("port must be an integer between 1 and 65535");
-  }
-
-  // A trailing slash here would produce "https://host//?k=..." in every
-  // bookmark and pairing payload, so normalize once at load.
-  config.publicUrl = typeof config.publicUrl === "string" ? config.publicUrl.trim().replace(/\/+$/, "") : "";
-  if (config.publicUrl && !/^https?:\/\//.test(config.publicUrl)) {
-    throw new Error("publicUrl must start with http:// or https://");
   }
 
   // An absolute path or nothing: a relative socket path would resolve against
@@ -288,17 +397,8 @@ function localLanAddresses(port) {
   return addresses;
 }
 
-function baseUrl(config) {
-  // An externally managed tunnel outranks ngrok: it is the address the operator
-  // pointed at this server, so it stays authoritative even when ngrok is left
-  // configured (and running) as a fallback route.
-  if (config.publicUrl) {
-    return config.publicUrl;
-  }
-  if (config.ngrok.enabled) {
-    return `https://${config.ngrok.domain}`;
-  }
-  return `http://127.0.0.1:${config.port}`;
+function baseUrl(config, liveNgrokUrl = "") {
+  return advertisedUrl(config, liveNgrokUrl) || `http://127.0.0.1:${config.port}`;
 }
 
 function publicBaseUrl(config, actualBaseUrl = "") {
@@ -315,7 +415,11 @@ function pairingPayload(config, actualBaseUrl = "", tls = null) {
   // use the self-signed cert. The app rewrites them to https://IP:tlsPort itself
   // when certFingerprint is present (it pins by fingerprint, so the IP is fine).
   const lanUrls = localLanAddresses(config.port);
-  const preferredBaseUrl = actualBaseUrl || (config.ngrok.enabled ? baseUrl(config) : (lanUrls[0] || baseUrl(config)));
+  // With any tunnel configured, the app should pair on the public route and
+  // fall back to LAN; with none (`--no-tunnels`, i.e. `tools/airc local`) a LAN
+  // address beats the 127.0.0.1 the base URL would otherwise be.
+  const preferredBaseUrl = actualBaseUrl
+    || (anyTunnelEnabled(config) ? baseUrl(config) : (lanUrls[0] || baseUrl(config)));
   const sessions = config.sessions || [config.session];
   // Globs aren't session names, so they'd read as noise in the app's device
   // label ("thinkpad *"). Name the device after the sessions it is pinned to,
@@ -342,6 +446,9 @@ module.exports = {
   pairingPayload,
   localLanAddresses,
   publicBaseUrl,
+  advertisedUrl,
+  tunnelUrl,
   tokenWarnings,
+  TUNNEL_NAMES,
   DEFAULT_CONFIG_PATH,
 };

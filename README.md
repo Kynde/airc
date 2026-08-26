@@ -98,14 +98,18 @@ public tunnel.
 > accounts, including via Traffic Policy. Use an external tunnel instead, or a
 > paid ngrok plan.
 
-Point `publicUrl` at any tunnel you run yourself — [Tailscale
+Tunnels live under `tunnels` in `config.json`, one entry each with its own
+`enabled` flag. Point `tunnels.tailscale.url` (or `tunnels.external.url`) at any
+tunnel you run yourself — [Tailscale
 Funnel](INSTALLATION.md#public-access-with-an-external-tunnel), Cloudflare Tunnel,
 a reverse proxy — and Airc advertises that address in bookmarks and the pairing
-QR. Airc doesn't start or supervise it; it only needs the URL.
+QR. Airc doesn't start or supervise those; it only needs the URL.
 
-Airc can also run ngrok itself, which needs a (free) account and a one-time
-setup. The full walkthrough for both — plus how to serve LAN **and** tunnel at
-once so the app uses a direct connection at home and the tunnel away — is in
+Airc can also run ngrok itself (`tunnels.ngrok`), which needs a (free) account
+and a one-time setup. Several tunnels can be enabled at once — they all keep
+working, and `tunnels.prefer` picks which one gets advertised. The full
+walkthrough — plus how to serve LAN **and** tunnel at once so the app uses a
+direct connection at home and the tunnel away — is in
 **[INSTALLATION.md](INSTALLATION.md#public-access-with-an-external-tunnel)**.
 
 ```sh

@@ -5,7 +5,7 @@
   "license": "MIT",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node src/server.js --no-ngrok --host 0.0.0.0",
+    "dev": "node src/server.js --no-tunnels --host 0.0.0.0",
     "lint": "eslint .",
     "check": "eslint . && node scripts/check.js"
   },

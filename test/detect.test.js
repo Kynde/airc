@@ -16,11 +16,21 @@ const CASES = [
   { name: "claude-waiting", command: "claude", agent: "claude", state: STATE.WAITING },
   { name: "claude-busy", command: "claude", agent: "claude", state: STATE.BUSY },
   { name: "claude-busy-thinking", command: "claude", agent: "claude", state: STATE.BUSY },
+  // The first seconds of a turn: the spinner is up but there is no token
+  // counter yet — bare ("✽ Cooking…"), then with an effort clause but still no
+  // count. Matching the counter read both of these as a FINISHED agent.
+  { name: "claude-busy-spinner", command: "claude", agent: "claude", state: STATE.BUSY },
+  { name: "claude-busy-effort", command: "claude", agent: "claude", state: STATE.BUSY },
   { name: "claude-idle", command: "claude", agent: "claude", state: STATE.IDLE_INPUT },
   // Finished, but with a half-typed prompt left in the composer: still idle,
   // still awaiting instruction. Anchoring idle on an *empty* "❯" line dropped
   // these panes out of the attention HUD entirely.
   { name: "claude-idle-draft", command: "claude", agent: "claude", state: STATE.IDLE_INPUT },
+  // Finished, but the transcript QUOTES spinner lines (an agent that pasted a
+  // log, or that works on this very file). Scanning the whole screen read those
+  // words as work and pinned the pane orange long after the turn ended, so this
+  // capture keeps the busy match bounded to the status area above the composer.
+  { name: "claude-idle-quoting-spinner", command: "claude", agent: "claude", state: STATE.IDLE_INPUT },
   { name: "codex-waiting", command: "codex", agent: "codex", state: STATE.WAITING },
   { name: "codex-busy", command: "codex", agent: "codex", state: STATE.BUSY },
   { name: "codex-idle", command: "codex", agent: "codex", state: STATE.IDLE_INPUT },

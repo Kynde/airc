@@ -1,0 +1,73 @@
+
+ ▐▛███▛█   Claude Code v2.1.263
+▝▜██████▀  Opus 5 with high effort · Claude Pro
+  ▝▝ ▝▝    /tmp/claude-1000/-home-k-airc/22ce736d-5a8f-4f0f-92dc-ff63fc99c471/scratchpad/probe-cwd
+
+
+! cat spinner-notes.txt
+  ⎿  Busy-line shapes seen in Claude Code 2.1.263:
+     ✽ Cooking…
+     ✶ Flambéing… (5s · thinking with high effort)
+     · Moseying… (6m 28s · ↓ 27.3k tokens · thought for 4s)
+     and the finished marker it leaves behind:
+     ✻ Sautéed for 53s · done 4:03 PM
+
+● Got it — that's in context now. The notes capture four states: active spinner (✽/✶ + gerund), an idle/low-key variant (·), and the completion line (✻ + past tense + duration + wall-clock time), with the metadata segment after · varying
+  by what's worth reporting (effort, elapsed, token count, thinking time).
+
+  What do you want to do with it?
+
+✻ Baked for 9s · done 4:32 PM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ write a script that generates these spinner lines
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  PRO Opus 5 🧠 |  📁 /tmp/claude-1000/-home-k-airc/22ce736d-5a8f-4f0f-92dc-ff63fc99c471/scratchpad/probe-cwd                                                                                                                             /rc
+  ░░░░░░░░░░░░░░░░░░░░ 3% | ⏱️  0m 22s | 📊 turn ↑29.8K ↓479 | ⚡ 24% ↻3h57m
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

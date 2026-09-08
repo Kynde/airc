@@ -27,20 +27,44 @@ const STATE = Object.freeze({
 });
 
 // --- Claude Code -----------------------------------------------------------
-// busy:   spinner with a live elapsed-time + token counter, e.g.
-//           "✽ Beaming… (9m 3s · ↓ 42.7k tokens)"  /  "✶ Sock-hopping… (4s · ↓ 111 tokens)"
-//         Newer builds append a trailing clause after the count, e.g.
-//           "… (7m 50s · ↓ 29.8k tokens · still thinking with xhigh effort)",
-//         so the token counter is not anchored to the closing paren.
-//         (older builds showed "esc to interrupt"; kept as an alternative.)
+// busy:   the live spinner line — an animated glyph then a single word ending
+//         in the "…" ellipsis, which is the ONE part every build renders:
+//           "✽ Cooking…"                                  (nothing to report yet)
+//           "✶ Flambéing… (5s · thinking with high effort)"   (no tokens yet)
+//           "· Moseying… (6m 28s · ↓ 27.3k tokens · thought for 4s)"
+//         The parenthetical is optional and its contents vary (elapsed time,
+//         token counter, effort/thinking clause, retry status), so matching it
+//         is what kept missing a thinking agent: before the first token of a
+//         turn there is no counter at all, and the pane then fell through to
+//         the "❯" composer check and reported as FINISHED. The word+ellipsis
+//         must be the line's first token — wrapped transcript text ends with
+//         "…" too, and the finished-turn marker ("✻ Sautéed for 53s · done
+//         4:03 PM") has no ellipsis at all, so neither can trip this.
+//         The old time+token parenthetical and "esc to interrupt" are kept as
+//         alternatives: they still catch a spinner line clipped by a narrow
+//         pane, where the wrap can split the word from its ellipsis.
+//         WHERE it matches is half the signature: only the status area just
+//         above the composer counts (claudeStatusArea), and only at column 0.
+//         An agent that merely TALKS about a spinner — quoting one into its
+//         answer, pasting a log, or working on this very file — puts that text
+//         in the transcript, which is indented under its "●" bullet and scrolls
+//         away from the composer. Scanning the whole screen read those words as
+//         work and left a finished agent stuck showing "busy". Across 583 live
+//         busy captures the real spinner sat 3-9 lines above the composer,
+//         every one of them at column 0.
 // waiting: a highlighted numbered menu line, e.g. "❯ 1. Yes, auto-accept edits".
 // idle:    the composer box — a line opening with the "❯" prompt arrow. It need
 //          not be empty: an agent that finished and left a half-typed prompt
 //          sitting there is still awaiting instruction, and anchoring on an
 //          empty box dropped those panes out of the HUD entirely.
-const CLAUDE_BUSY = /\(\d+m?\s*\d*s\s*·[^)]*tokens?\b|esc to interrupt/;
+const CLAUDE_BUSY = /^(?:\S[ \t]+)?[^\s()…]+…(?:[ \t]|$)|\(\d+m?\s*\d*s\s*·[^)]*tokens?\b|esc to interrupt/m;
+// How far above the composer the status area reaches. Observed max is 9 lines
+// (spinner + a tip or a few todo rows + a blank); 12 leaves room to drift.
+const CLAUDE_STATUS_LINES = 12;
 const CLAUDE_MENU = /❯\s+\d+\.\s/;
 const CLAUDE_PROMPT = /^\s*❯(?:\s|$)/m;
+// Same shape, one line at a time: used to find the composer, not to test a screen.
+const CLAUDE_PROMPT_LINE = /^\s*❯(?:\s|$)/;
 // Distinctive chrome for command-less identification (the model/footer lines).
 const CLAUDE_CHROME = /accept edits on|shift\+tab to cycle|❯\s+\d+\.\s/;
 
@@ -91,6 +115,23 @@ const OMP_WAITING = /up\/down navigate\s+enter (?:select|toggle)|^\s*Allow tool:
 const OMP_STATUS = /[╭.][─-]{2,}\s*(?:π|pi)\s/;
 const OMP_CHROME = /omp v\d|[⟦⟨[]esc[⟧⟩\]]|up\/down navigate\s+enter (?:select|toggle)|^\s*Allow tool:\s/m;
 
+// The lines Claude draws between its transcript and its input box — where the
+// live spinner lives. Anchored on the LAST "❯" line: the composer is always the
+// bottom-most one (earlier "❯" lines are echoed prompts, higher up). A screen
+// with no composer at all (a takeover box, a redraw) falls back to the bottom
+// of the capture, which is where the status area sits regardless.
+function claudeStatusArea(text) {
+  const lines = text.split("\n");
+  let composer = lines.length;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (CLAUDE_PROMPT_LINE.test(lines[i])) {
+      composer = i;
+      break;
+    }
+  }
+  return lines.slice(Math.max(0, composer - CLAUDE_STATUS_LINES), composer).join("\n");
+}
+
 const DETECTORS = [
   {
     // Ahead of Claude on purpose: Copilot's "❯ 1. Yes" approval menu matches
@@ -125,7 +166,7 @@ const DETECTORS = [
       // Order matters: a busy Claude pane also shows an empty "❯" box, and a
       // menu can briefly co-exist with stale spinner text, so waiting wins.
       if (CLAUDE_MENU.test(text)) return STATE.WAITING;
-      if (CLAUDE_BUSY.test(text)) return STATE.BUSY;
+      if (CLAUDE_BUSY.test(claudeStatusArea(text))) return STATE.BUSY;
       if (CLAUDE_PROMPT.test(text)) return STATE.IDLE_INPUT;
       return STATE.NONE;
     },

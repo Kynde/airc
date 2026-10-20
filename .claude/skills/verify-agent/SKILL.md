@@ -39,6 +39,14 @@ Anything else: ask which binary it is and how to make it ask for approval.
 States: `idle-input`, `busy`, `waiting`, `none` (= unrecognised; always a bug
 here).
 
+Every expectation below is on BOTH fields: the agent must be the table's
+detector name, not just the state right. The agent is what the HUD chip names
+the pane by (`omp ai:0`), and detectors run in order, so a screen can be
+claimed by the wrong one — omp's "❯ Approve" box reads as Claude's composer
+if omp's detector misses it. `claude waiting` on an omp pane is a failure.
+The command in parentheses should also be the expected binary; a wrapper that
+doesn't `exec` would show up as `bash` here and leave detection to text alone.
+
 ## Steps
 
 Work in a scratch dir (`$SCRATCH/verify-<arg>`, under the session scratchpad),
@@ -57,7 +65,7 @@ Give it ~15s, then look at the screen. Claude and Codex ask whether to trust a
 new folder first — answer that (Enter) before going on; it is not a state under
 test.
 
-**2. Idle.** Expect `idle-input`.
+**2. Idle.** Expect `<detector> idle-input`.
 
 **3. Waiting.** Send a prompt that needs a shell command:
 ```bash
@@ -66,13 +74,13 @@ sleep 0.5; tmux send-keys -t airc-verify Enter
 ```
 (Text and Enter separately: some TUIs eat an Enter that arrives in the same
 burst as a paste.) Poll every few seconds until the approval box is up, then
-expect `waiting`.
+expect `<detector> waiting`.
 
 **4. Busy.** Approve (Enter on the default "Approve"/"Yes" option). During the
-30s sleep, expect `busy`. Check twice, a few seconds apart — a spinner that
+30s sleep, expect `<detector> busy`. Check twice, a few seconds apart — a spinner that
 reads busy on one frame and not the next is worth catching.
 
-**5. Idle again.** Once it has answered, expect `idle-input`.
+**5. Idle again.** Once it has answered, expect `<detector> idle-input`.
 
 **6. Agent-specific extras**, where they exist:
 - omp: its *ask* tool is a second kind of waiting — "Use your ask tool to ask
@@ -105,5 +113,5 @@ quit lands in the agent as a prompt.
 5. Re-run the failing steps live until each reads right, and run
    `pane-state.js` over the user's own panes of that agent as a final check.
 
-Report a table of step → expected → got, and what was fixed. Don't commit
+Report a table of step → expected (agent + state) → got, and what was fixed. Don't commit
 unless asked.

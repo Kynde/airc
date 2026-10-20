@@ -94,26 +94,46 @@ const CODEX_READY = /·\s*Ready\s*·/;
 const CODEX_CHROME = /OpenAI Codex|·\s*(?:Ready|Working)\s*·/;
 
 // --- oh-my-pi (omp) --------------------------------------------------------
-// busy:    the working line carries a bracketed interrupt hint, e.g.
+// omp redraws its chrome now and then; both generations are kept, since a
+// running session only picks up the new look once it restarts.
+//
+// Key glyphs follow omp's `symbolPreset` setting — unicode (⏎ ⎋), nerdfont
+// (private-use glyphs U+F0311 / U+F12B7) or ascii ("Enter" / "Esc") — so every
+// pattern built on a key name accepts all three.
+//
+// busy:    v18+: a working line "  ⎋ Committing writes, docs, DB tests" right
+//          above the status line, while the status line's π gives way to a
+//          spinner and elapsed time ("⠋ 5m > ◒ Opus …").
+//          Older: the working line carried a bracketed hint instead,
 //            "⠋ Working… ⟦esc⟧"  /  "⠸ Merging PR 4477 and confirming ⟦esc⟧"
-//          The status text is whatever the agent is doing, so the hint is the
-//          only fixed part. Its brackets follow omp's `symbolPreset` setting —
-//          ⟦⟧ (unicode), ⟨⟩ (nerdfont) or [] (ascii) — so all three count. A
-//          command run from the "!" shell prefix uses a different loader,
-//          "⠇ Running… (esc to cancel)", which is equally busy.
+//          with ⟦⟧, ⟨⟩ or [] per preset. A command run from the "!" shell
+//          prefix used "⠇ Running… (esc to cancel)", which is equally busy.
 // waiting: every blocking prompt — tool approval, plan review, the ask tool,
 //          an extension's own dialog — renders through one selector, whose
-//          help line is invariant across all of them. Tool approvals title the
-//          box "Allow tool: <name>" over the "❯ Approve / Deny" options.
+//          help line is invariant across all of them:
+//            v18+:  "⏎ select · n note · ↑/↓ move · ⎋ cancel · Alt+H hide"
+//                   "↑/↓ choose · ⏎ select · … · ⎋ deny · …" (tool approval)
+//            older: "up/down navigate  enter select"
+//          Tool approvals title the box "Allow tool: <name>" — in its top edge
+//          since v18 ("╭─ Allow tool: bash ──"), on its own line before.
 // idle:    the composer, under a status line that opens with omp's π mark
 //          ("pi" under the ascii preset) — the one piece of the configurable
-//          status line that every preset keeps.
+//          status line that every preset keeps. v18+ draws it bare at the
+//          start of the line, just above the frame's bottom corner ("╰─");
+//          older versions drew it inside the frame's top edge ("╭── π").
 // NOTE: the approval box's "❯ Approve" line also trips CLAUDE_PROMPT, so this
 // detector must sit ahead of Claude in DETECTORS (see the copilot note above).
-const OMP_BUSY = /[⟦⟨[]esc[⟧⟩\]]|\(esc to cancel\)/;
-const OMP_WAITING = /up\/down navigate\s+enter (?:select|toggle)|^\s*Allow tool:\s/m;
-const OMP_STATUS = /[╭.][─-]{2,}\s*(?:π|pi)\s/;
+const OMP_ENTER = "(?:⏎|\u{F0311}|Enter)";
+const OMP_ESC = "(?:⎋|\u{F12B7}|Esc)";
+const OMP_WORKING = new RegExp(`^ {1,3}${OMP_ESC} \\S`, "mu");
+const OMP_SELECTOR = new RegExp(`${OMP_ENTER} (?:select|toggle)\\b.*·\\s*${OMP_ESC} (?:cancel|deny)\\b`, "u");
+const OMP_BUSY_OLD = /[⟦⟨[]esc[⟧⟩\]]|\(esc to cancel\)/;
+const OMP_WAITING = /up\/down navigate\s+enter (?:select|toggle)|^\s*(?:╭─+ )?Allow tool:\s/m;
+const OMP_STATUS = /^ ?(?:π|pi) .*\n\s*[╰'`][─-]|[╭.][─-]{2,}\s*(?:π|pi)\s/m;
 const OMP_CHROME = /omp v\d|[⟦⟨[]esc[⟧⟩\]]|up\/down navigate\s+enter (?:select|toggle)|^\s*Allow tool:\s/m;
+
+const ompBusy = (text) => OMP_WORKING.test(text) || OMP_BUSY_OLD.test(text);
+const ompWaiting = (text) => OMP_SELECTOR.test(text) || OMP_WAITING.test(text);
 
 // The lines Claude draws between its transcript and its input box — where the
 // live spinner lives. Anchored on the LAST "❯" line: the composer is always the
@@ -149,12 +169,13 @@ const DETECTORS = [
     // Ahead of Claude for the same reason Copilot is: omp's approval box lists
     // its options behind "❯", which CLAUDE_PROMPT reads as an idle composer.
     name: "omp",
-    matches: ({ command, text }) => command === "omp" || OMP_CHROME.test(text) || OMP_STATUS.test(text),
+    matches: ({ command, text }) =>
+      command === "omp" || OMP_CHROME.test(text) || ompWaiting(text) || ompBusy(text) || OMP_STATUS.test(text),
     classify: ({ text }) => {
       // Waiting first: the selector opens mid-turn, so the working line above
       // it can still be on screen while the agent is blocked on the answer.
-      if (OMP_WAITING.test(text)) return STATE.WAITING;
-      if (OMP_BUSY.test(text)) return STATE.BUSY;
+      if (ompWaiting(text)) return STATE.WAITING;
+      if (ompBusy(text)) return STATE.BUSY;
       if (OMP_STATUS.test(text)) return STATE.IDLE_INPUT;
       return STATE.NONE;
     },

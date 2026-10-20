@@ -37,6 +37,12 @@ const CASES = [
   { name: "omp-waiting", command: "omp", agent: "omp", state: STATE.WAITING },
   { name: "omp-busy", command: "omp", agent: "omp", state: STATE.BUSY },
   { name: "omp-idle", command: "omp", agent: "omp", state: STATE.IDLE_INPUT },
+  // omp v18 redrew its chrome: "⎋ <task>" working line, π at the start of the
+  // status line instead of inside the frame, a new selector help line.
+  { name: "omp-waiting-v18", command: "omp", agent: "omp", state: STATE.WAITING },
+  { name: "omp-approval-v18", command: "omp", agent: "omp", state: STATE.WAITING },
+  { name: "omp-busy-v18", command: "omp", agent: "omp", state: STATE.BUSY },
+  { name: "omp-idle-v18", command: "omp", agent: "omp", state: STATE.IDLE_INPUT },
   { name: "copilot-waiting", command: "copilot", agent: "copilot", state: STATE.WAITING },
   { name: "copilot-busy", command: "copilot", agent: "copilot", state: STATE.BUSY },
   { name: "copilot-idle", command: "copilot", agent: "copilot", state: STATE.IDLE_INPUT },
@@ -82,9 +88,17 @@ test("copilot recognized without command hint", () => {
 });
 
 test("omp recognized without command hint", () => {
-  const result = detectPaneState({ text: fixture("omp-busy"), command: "node" });
-  assert.strictEqual(result.agent, "omp");
-  assert.strictEqual(result.state, STATE.BUSY);
+  const expected = {
+    "omp-busy": STATE.BUSY,
+    "omp-waiting-v18": STATE.WAITING,
+    "omp-approval-v18": STATE.WAITING,
+    "omp-busy-v18": STATE.BUSY,
+    "omp-idle-v18": STATE.IDLE_INPUT,
+  };
+  for (const [name, state] of Object.entries(expected)) {
+    const result = detectPaneState({ text: fixture(name), command: "node" });
+    assert.deepStrictEqual(result, { agent: "omp", state }, name);
+  }
 });
 
 // Regression: omp's approval box lists "❯ Approve" / "  Deny", and that first

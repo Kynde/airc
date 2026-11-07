@@ -48,7 +48,7 @@ const rules = {
 };
 
 module.exports = [
-  { ignores: ["node_modules/**", "android-app/**"] },
+  { ignores: ["node_modules/**", "android-app/**", "public/airc-crypto.js"] },
   {
     files: ["src/**/*.js", "scripts/**/*.js", "test/**/*.js"],
     languageOptions: {

@@ -69,7 +69,13 @@ function startNgrok(options, log, onUrl) {
     if (state.stopping) {
       return;
     }
-    const args = ["http", String(options.port), "--url", `https://${options.domain}`, "--log", "stdout", "--log-format", "json"];
+    // --inspect=false: by default the agent records every request, headers
+    // (X-Airc-Auth) and bodies included, in its inspector on 127.0.0.1:4040,
+    // where any local user can read it.
+    const args = [
+      "http", String(options.port), "--url", `https://${options.domain}`, "--inspect=false",
+      "--log", "stdout", "--log-format", "json",
+    ];
     log(`[ngrok] starting: ${options.binary} ${args.join(" ")}`);
     const child = spawn(options.binary, args, { stdio: ["ignore", "pipe", "pipe"] });
     state.child = child;

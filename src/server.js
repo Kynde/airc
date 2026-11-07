@@ -120,6 +120,18 @@ function sendFile(response, fileName, contentType, cacheControl, extraHeaders = 
   });
 }
 
+// Only the path and query are ever read, so parse against a fixed base rather
+// than the client's Host header: a malformed Host (e.g. "[") or request target
+// would otherwise throw inside the listener and take the process down before
+// authentication. Returns null for anything unparseable.
+function parseRequestUrl(request) {
+  try {
+    return new URL(request.url, "http://localhost");
+  } catch {
+    return null;
+  }
+}
+
 function clientAddress(request) {
   const forwarded = request.headers["x-forwarded-for"];
   if (forwarded) {
@@ -968,7 +980,11 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
   }
 
   function handleRequest(request, response) {
-    const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
+    const url = parseRequestUrl(request);
+    if (!url) {
+      send(response, 400, "text/plain; charset=utf-8", "bad request\n");
+      return;
+    }
     log(`${clientAddress(request)} ${request.method} ${url.pathname}`);
 
     // Defense-in-depth headers on every response. `style-src 'unsafe-inline'`
@@ -1165,7 +1181,11 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
   }
 
   function handleUpgrade(request, socket) {
-    const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
+    const url = parseRequestUrl(request);
+    if (!url) {
+      rejectUpgrade(socket, 400);
+      return;
+    }
     if (url.pathname !== "/api/tmux/ws") {
       rejectUpgrade(socket);
       return;
@@ -1367,6 +1387,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     },
     on(event, listener) {
       httpServer.on(event, listener);
+    },
+    address() {
+      return httpServer.address();
     },
     closeWebSockets() {
       for (const socket of wsSockets) {

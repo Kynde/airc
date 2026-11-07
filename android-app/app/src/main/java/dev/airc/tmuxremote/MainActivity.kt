@@ -41,19 +41,13 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.HttpsURLConnection
 import kotlin.concurrent.thread
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
 
 data class Profile(
     val name: String,
@@ -152,7 +146,8 @@ class MainActivity : ComponentActivity() {
     private var lastAttentionJson: String = ""
     private var etag: String? = null
     private var polling = false
-    private var ws: WebSocket? = null
+    // The encrypted stream (E2e.kt); null when down.
+    private var ws: E2eChannel? = null
     @Volatile private var wsConnected = false
     @Volatile private var wsConnecting = false
     private var lastWsAttemptAt = 0L
@@ -161,6 +156,9 @@ class MainActivity : ComponentActivity() {
     // HttpsURLConnection sites so one config serves both LAN (pinned) and ngrok.
     private var pinned: Pinning.Pinned? = null
     private var httpClient: OkHttpClient = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
+    // Every HTTP call is end-to-end encrypted under the profile's token, which
+    // never goes on the wire (docs/e2e-encryption.md). Rebuilt with the profile.
+    private var e2e: E2eClient? = null
     private var lastGoodUrl: String = ""
     private var lastLanProbeAt: Long = 0
     private var lastConfigRefreshAt: Long = 0
@@ -219,6 +217,41 @@ class MainActivity : ComponentActivity() {
         val builder = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS)
         pinned?.let { builder.sslSocketFactory(it.socketFactory, it.trustManager).hostnameVerifier(it.hostnameVerifier) }
         httpClient = builder.build()
+        e2e = profile?.let { E2eClient(it.token, "android", BuildConfig.GIT_DESCRIBE, ::postBytes) }
+    }
+
+    // One POST of opaque bytes for E2eClient, over the pinned connection.
+    private fun postBytes(url: String, body: ByteArray, connectMs: Int, readMs: Int): Pair<Int, ByteArray> {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            useCaches = false
+            setRequestProperty("Content-Type", "application/octet-stream")
+            setFixedLengthStreamingMode(body.size)
+            connectTimeout = connectMs
+            readTimeout = readMs
+        }
+        applyPinning(connection)
+        connection.outputStream.use { it.write(body) }
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        return code to (stream?.use { it.readBytes() } ?: ByteArray(0))
+    }
+
+    // One encrypted API call against baseUrl. Throws on transport failure, and
+    // E2eRefused when the server doesn't accept the token.
+    private fun api(
+        baseUrl: String,
+        path: String,
+        method: String = "GET",
+        query: String = "",
+        body: String = "",
+        headers: Map<String, String> = emptyMap(),
+        connectMs: Int = 2500,
+        readMs: Int = 6000,
+    ): E2eClient.Reply {
+        val client = e2e ?: throw java.io.IOException("not paired")
+        return client.request(baseUrl, method, path, query, body, headers, connectMs, readMs)
     }
 
     // Install the pinning trust manager on any HTTPS connection. ngrok (real CA)
@@ -999,19 +1032,13 @@ class MainActivity : ComponentActivity() {
                 val params = mutableListOf<String>()
                 if (followSession.isNotBlank()) params.add("session=${URLEncoder.encode(followSession, "UTF-8")}")
                 if (pinnedPane.isNotBlank()) params.add("pane=${URLEncoder.encode(pinnedPane, "UTF-8")}")
-                val query = if (params.isEmpty()) "" else "?${params.joinToString("&")}"
+                val query = params.joinToString("&")
                 var lastError = "offline"
                 for (baseUrl in endpointUrls(current)) {
                     try {
-                        val connection = (URL("$baseUrl/api/tmux/frame$query").openConnection() as HttpURLConnection).apply {
-                            requestMethod = "GET"
-                            setRequestProperty("X-Airc-Auth", current.token)
-                            etag?.let { setRequestProperty("If-None-Match", it) }
-                            connectTimeout = 2500
-                            readTimeout = 6000
-                        }
-                        applyPinning(connection)
-                        val code = connection.responseCode
+                        val reply = api(baseUrl, "/api/tmux/frame", query = query,
+                            headers = etag?.let { mapOf("If-None-Match" to it) } ?: emptyMap())
+                        val code = reply.status
                         if (code == 304) {
                             rememberEndpoint(baseUrl)
                             postStatus("idle")
@@ -1019,9 +1046,8 @@ class MainActivity : ComponentActivity() {
                             break
                         } else if (code in 200..299) {
                             rememberEndpoint(baseUrl)
-                            etag = connection.getHeaderField("ETag")
-                            val json = connection.inputStream.bufferedReader().readText()
-                            renderFrame(JSONObject(json))
+                            etag = reply.header("ETag")
+                            renderFrame(JSONObject(reply.body))
                             handled = true
                             break
                         } else {
@@ -1053,15 +1079,9 @@ class MainActivity : ComponentActivity() {
     // on the poll worker thread; hands results back to the UI thread.
     private fun fetchAttention(current: Profile, baseUrl: String) {
         try {
-            val connection = (URL("$baseUrl/api/attention").openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                setRequestProperty("X-Airc-Auth", current.token)
-                connectTimeout = 2500
-                readTimeout = 6000
-            }
-            applyPinning(connection)
-            if (connection.responseCode !in 200..299) return
-            val payload = JSONObject(connection.inputStream.bufferedReader().readText())
+            val reply = api(baseUrl, "/api/attention")
+            if (reply.status !in 200..299) return
+            val payload = JSONObject(reply.body)
             val items = payload.optJSONArray("items")?.let { parseAttention(it) } ?: emptyList()
             handler.post { applyAttention(items) }
         } catch (_: Exception) {
@@ -1082,15 +1102,9 @@ class MainActivity : ComponentActivity() {
         lastConfigRefreshAt = now
         thread {
             try {
-                val connection = (URL("$lastGoodUrl/api/config").openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    setRequestProperty("X-Airc-Auth", current.token)
-                    connectTimeout = 2500
-                    readTimeout = 6000
-                }
-                applyPinning(connection)
-                if (connection.responseCode !in 200..299) return@thread
-                val payload = JSONObject(connection.inputStream.bufferedReader().readText())
+                val reply = api(lastGoodUrl, "/api/config")
+                if (reply.status !in 200..299) return@thread
+                val payload = JSONObject(reply.body)
                 val freshLan = jsonArrayToList(payload.optJSONArray("lanUrls")).mapNotNull(::trustedLanUrl)
                 handler.post { applyDiscoveredEndpoints(freshLan) }
             } catch (_: Exception) {
@@ -1155,15 +1169,7 @@ class MainActivity : ComponentActivity() {
         thread {
             for (baseUrl in lan) {
                 try {
-                    val connection = (URL("$baseUrl/api/config").openConnection() as HttpURLConnection).apply {
-                        requestMethod = "GET"
-                        setRequestProperty("X-Airc-Auth", current.token)
-                        connectTimeout = 1500
-                        readTimeout = 2500
-                    }
-                    applyPinning(connection)
-                    val code = connection.responseCode
-                    connection.disconnect()
+                    val code = api(baseUrl, "/api/config", connectMs = 1500, readMs = 2500).status
                     if (BuildConfig.DEBUG) Log.i(TAG, "prefer-lan probe $baseUrl -> HTTP $code")
                     if (code in 200..299) {
                         if (BuildConfig.DEBUG) Log.i(TAG, "prefer-lan: $baseUrl reachable, dropping tunnel")
@@ -1212,36 +1218,22 @@ class MainActivity : ComponentActivity() {
         val current = profile ?: return
         wsConnecting = true
         lastWsAttemptAt = System.currentTimeMillis()
-        val request = Request.Builder()
-            .url("$baseUrl/api/tmux/ws")
-            .header("X-Airc-Auth", current.token)
-            .build()
-        ws = httpClient.newWebSocket(request, wsListener)
-    }
-
-    private val wsListener = object : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: Response) {
-            wsConnecting = false
-            wsConnected = true
-            sendViewState(webSocket)
-        }
-
-        override fun onMessage(webSocket: WebSocket, text: String) {
-            handleWsMessage(text)
-        }
-
-        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-            webSocket.close(1000, null)
-            markWsDown()
-        }
-
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            markWsDown()
-        }
-
-        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            markWsDown()
-        }
+        lateinit var channel: E2eChannel
+        channel = E2eChannel(
+            current.token,
+            "android",
+            BuildConfig.GIT_DESCRIBE,
+            onReady = {
+                wsConnecting = false
+                wsConnected = true
+                sendViewState(channel)
+            },
+            onMessage = ::handleWsMessage,
+            // A stale channel going down must not clear its replacement.
+            onDown = { handler.post { if (ws === channel) markWsDown() } },
+        )
+        ws = channel
+        channel.connect(httpClient, baseUrl)
     }
 
     private fun handleWsMessage(text: String) {
@@ -1257,7 +1249,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun sendViewState(socket: WebSocket? = ws) {
+    private fun sendViewState(socket: E2eChannel? = ws) {
         // session is sent even with a pin so a vanished pin falls back to its session.
         socket?.send(JSONObject().put("type", "view").put("pane", pinnedPane).put("session", followSession).toString())
     }
@@ -1272,8 +1264,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun closeWebSocket() {
-        ws?.close(1000, null)
+        val channel = ws
         markWsDown()
+        channel?.close()
     }
 
     private fun postStatus(text: String) {
@@ -1307,17 +1300,7 @@ class MainActivity : ComponentActivity() {
                 val body = payload.toString()
                 for (baseUrl in endpointUrls(current)) {
                     try {
-                        val connection = (URL("$baseUrl/api/tmux/input").openConnection() as HttpURLConnection).apply {
-                            requestMethod = "POST"
-                            doOutput = true
-                            setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                            setRequestProperty("X-Airc-Auth", current.token)
-                            connectTimeout = 2500
-                            readTimeout = 6000
-                        }
-                        applyPinning(connection)
-                        OutputStreamWriter(connection.outputStream, StandardCharsets.UTF_8).use { it.write(body) }
-                        val code = connection.responseCode
+                        val code = api(baseUrl, "/api/tmux/input", method = "POST", body = body).status
                         if (code in 200..299) {
                             rememberEndpoint(baseUrl)
                             postStatus("sent")
@@ -1382,14 +1365,9 @@ class MainActivity : ComponentActivity() {
             try {
                 for (baseUrl in endpointUrls(current)) {
                     try {
-                        val connection = (URL("$baseUrl/api/tmux/panes").openConnection() as HttpURLConnection).apply {
-                            requestMethod = "GET"
-                            setRequestProperty("X-Airc-Auth", current.token)
-                            connectTimeout = 2500
-                            readTimeout = 6000
-                        }
-                        applyPinning(connection)
-                        val payload = JSONObject(connection.inputStream.bufferedReader().readText())
+                        val reply = api(baseUrl, "/api/tmux/panes")
+                        if (reply.status !in 200..299) throw java.io.IOException("panes ${reply.status}")
+                        val payload = JSONObject(reply.body)
                         rememberEndpoint(baseUrl)
                         handler.post { showPaneDialog(buildPickerRows(payload)) }
                         loaded = true

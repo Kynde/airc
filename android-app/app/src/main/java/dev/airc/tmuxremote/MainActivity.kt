@@ -249,11 +249,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun isLanHost(host: String): Boolean =
-        host.startsWith("10.") ||
-            host.startsWith("192.168.") ||
-            host.endsWith(".local") ||
-            Regex("^172\\.(1[6-9]|2\\d|3[0-1])\\.").containsMatchIn(host)
+    // A LAN host is a private-range IPv4 literal (or mDNS .local). A bare prefix test would
+    // also pass a DNS name like 10.attacker.example, which secureLan would then upgrade to
+    // HTTPS and Pinning would accept on any CA-valid cert for that name.
+    private fun isLanHost(host: String): Boolean = isPrivateIpv4(host) || host.endsWith(".local")
+
+    private fun isPrivateIpv4(host: String): Boolean {
+        val octets = host.split(".").map { part ->
+            if (part.isEmpty() || part.length > 3 || !part.all { it.isDigit() }) return false
+            part.toInt().takeIf { it <= 255 } ?: return false
+        }
+        if (octets.size != 4) return false
+        return octets[0] == 10 ||
+            (octets[0] == 192 && octets[1] == 168) ||
+            (octets[0] == 172 && octets[1] in 16..31)
+    }
 
     private fun loadProfile(): Profile? {
         val prefs = prefs()
@@ -1081,36 +1091,48 @@ class MainActivity : ComponentActivity() {
                 applyPinning(connection)
                 if (connection.responseCode !in 200..299) return@thread
                 val payload = JSONObject(connection.inputStream.bufferedReader().readText())
-                val freshLan = jsonArrayToList(payload.optJSONArray("lanUrls"))
-                val freshPublic = payload.optString("publicUrl").trim().trimEnd('/')
-                handler.post { applyDiscoveredEndpoints(freshLan, freshPublic) }
+                val freshLan = jsonArrayToList(payload.optJSONArray("lanUrls")).mapNotNull(::trustedLanUrl)
+                handler.post { applyDiscoveredEndpoints(freshLan) }
             } catch (_: Exception) {
                 // Best-effort refresh; the tunnel keeps working regardless.
             }
         }
     }
 
-    private fun applyDiscoveredEndpoints(freshLan: List<String>, freshPublic: String) {
+    // This refresh arrives over the tunnel, the very transport the pairing QR is meant to
+    // let us distrust, so it may only ADD what the pinned LAN path will vet anyway: plain
+    // http://<private IPv4>:<port> entries (rebuilt from their parts, nothing else carried
+    // over), which secureLan turns into pinned HTTPS. Anything else is dropped.
+    private fun trustedLanUrl(raw: String): String? = try {
+        val parsed = URL(raw.trim())
+        if (parsed.protocol == "http" && parsed.userInfo == null && isPrivateIpv4(parsed.host) && parsed.port in 1..65535) {
+            "http://${parsed.host}:${parsed.port}"
+        } else {
+            null
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    // publicUrl is deliberately NOT refreshed: a tunnel that could rewrite it would redirect
+    // the app (and its control token) for good. It changes only by re-pairing.
+    private fun applyDiscoveredEndpoints(freshLan: List<String>) {
         val current = profile ?: return
-        val publicUrl = if (freshPublic.isNotBlank()) freshPublic else current.publicUrl
         // An empty list means the laptop reported no LAN IPs right now; keep the existing
         // snapshot (and don't bother dropping the tunnel) over a transient interface blip.
         val lanUrls = if (freshLan.isNotEmpty()) freshLan else current.lanUrls
         val lanChanged = lanUrls != current.lanUrls
         if (lanChanged && BuildConfig.DEBUG) Log.i(TAG, "config refresh: lanUrls ${current.lanUrls} -> $lanUrls")
-        if (!lanChanged && publicUrl == current.publicUrl) return
-        profile = current.copy(lanUrls = lanUrls, publicUrl = publicUrl)
+        if (!lanChanged) return
+        profile = current.copy(lanUrls = lanUrls)
         prefs().edit()
             .putString("lanUrls", JSONArray(lanUrls).toString())
-            .putString("publicUrl", publicUrl)
             .apply()
-        if (lanChanged) {
-            // Let the next poll probe the refreshed LAN addresses right away. A live websocket
-            // keeps HTTP polling (and thus the LAN probe) suspended, so drop it; the poll loop
-            // resumes, tries LAN first, and reconnects over whichever endpoint answers.
-            lastLanProbeAt = 0
-            if (wsConnected || wsConnecting) closeWebSocket()
-        }
+        // Let the next poll probe the refreshed LAN addresses right away. A live websocket
+        // keeps HTTP polling (and thus the LAN probe) suspended, so drop it; the poll loop
+        // resumes, tries LAN first, and reconnects over whichever endpoint answers.
+        lastLanProbeAt = 0
+        if (wsConnected || wsConnecting) closeWebSocket()
     }
 
     // A live websocket keeps the HTTP poll loop (and its LAN re-probe in endpointUrls) parked,

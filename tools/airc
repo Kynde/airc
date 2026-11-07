@@ -11,9 +11,10 @@ const SERVER = path.join(ROOT, "src", "server.js");
 const PID_FILE = path.join(ROOT, ".airc-server.pid");
 const STATE_FILE = path.join(ROOT, ".airc-server.json");
 const LOG_FILE = path.join(ROOT, ".airc-server.log");
+const LOG_ROTATE_BYTES = 5 * 1024 * 1024; // checked at each start; one old log is kept
 const ON_TIMEOUT_MS = 30000;
 
-const { loadConfig, bookmarkUrl, pairingPayload } = require(path.join(ROOT, "src", "config"));
+const { loadConfig, rotateTokens, bookmarkUrl, pairingPayload } = require(path.join(ROOT, "src", "config"));
 
 function usage(exitCode = 0) {
   console.log(`Usage: tools/airc COMMAND [options]
@@ -29,6 +30,9 @@ Commands:
   pair-web               print browser QR/URL/token with view token
   pair-web-control       print browser QR/URL/token with control token
   logs                   print the background server log path
+  rotate-tokens [view|control]
+                         replace both tokens (or one) and restart a running
+                         server; every client must re-pair
 
 Examples:
   tools/airc local
@@ -163,8 +167,12 @@ function printQr(value) {
 }
 
 function load(argv = []) {
+  return loadFull(argv).config;
+}
+
+function loadFull(argv = []) {
   try {
-    return loadConfig(argv).config;
+    return loadConfig(argv);
   } catch (error) {
     console.error(`airc: failed to load config: ${error.message}`);
     process.exit(1);
@@ -183,6 +191,7 @@ async function cmdOn(extraArgs, mode = "on") {
     return;
   }
 
+  rotateLog();
   // 0600: the server log can contain pairing output and is otherwise readable
   // by any local user.
   const log = fs.openSync(LOG_FILE, "a", 0o600);
@@ -233,6 +242,39 @@ async function cmdOn(extraArgs, mode = "on") {
   } catch {
     // Non-fatal; the server is up.
   }
+}
+
+// The server writes to an inherited file descriptor, so the log can only be
+// rotated between runs: past LOG_ROTATE_BYTES it becomes LOG_FILE.1, replacing
+// the previous one.
+function rotateLog() {
+  try {
+    if (fs.statSync(LOG_FILE).size > LOG_ROTATE_BYTES) {
+      fs.renameSync(LOG_FILE, `${LOG_FILE}.1`);
+    }
+  } catch {
+    // No log yet.
+  }
+}
+
+async function cmdRotateTokens(which = "both") {
+  const state = readState();
+  const serverArgs = state?.serverArgs || [];
+  const { configPath } = loadFull(serverArgs);
+  let rotated;
+  try {
+    rotated = rotateTokens(configPath, which);
+  } catch (error) {
+    console.error(`airc: ${error.message}`);
+    process.exit(1);
+  }
+  console.log(`airc: new ${rotated.join(" and ")} in ${configPath}`);
+  if (activePid()) {
+    // A restart loads the new tokens and drops every session opened with the old ones.
+    cmdOff();
+    await cmdOn(serverArgs, "on");
+  }
+  console.log("airc: re-pair every client: tools/airc pair-app, tools/airc pair-web (pair-web-control)");
 }
 
 function cmdOff() {
@@ -354,6 +396,8 @@ async function main() {
     await cmdPairWeb("view");
   } else if (command === "pair-web-control") {
     await cmdPairWeb("control");
+  } else if (command === "rotate-tokens") {
+    await cmdRotateTokens(rest[0]);
   } else if (command === "logs") {
     console.log(LOG_FILE);
   } else {

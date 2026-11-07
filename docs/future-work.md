@@ -81,7 +81,6 @@ Left for later, in rough order of appeal:
 
 Potential hardening:
 
-- token rotation command
 - expiry/session token layer
 - optional basic auth or ngrok/Cloudflare access policy
 - explicit "public tunnel active" indicator in CLI/browser UI

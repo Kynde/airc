@@ -266,10 +266,6 @@ From the two earlier reviews, how each item relates to this design:
     behind a shared tunnel address can't lock the owner out. With 192-bit tokens
     it's resource hygiene, not brute-force protection.
 - **Still open, outside this design:**
-  - `tools/airc rotate-tokens` (in `future-work.md`). It matters more once
-    tokens are long-lived key material.
-  - `.airc-server.log` is never rotated and records every request with its
-    address.
   - `0.0.0.0` binding also exposes the listener on VPN and Docker interfaces.
     Only the handshake endpoint is reachable there without a token, but binding
     to the LAN address would be tidier.

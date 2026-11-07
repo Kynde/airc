@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { test } = require("node:test");
 
-const { loadConfig, bookmarkUrl } = require("../src/config");
+const { loadConfig, bookmarkUrl, rotateTokens } = require("../src/config");
 
 function configFile(contents) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "airc-config-test-"));
@@ -54,4 +54,24 @@ test("bookmark links carry the token in the fragment, never the query", () => {
   const url = bookmarkUrl(config, "view");
   assert.ok(url.endsWith(`/#k=${OLD_VIEW}`), url);
   assert.ok(!url.includes("?"), url);
+});
+
+test("rotating replaces only the named tokens and keeps everything else", () => {
+  const configPath = configFile({ tokenEpoch: 2, controlToken: OLD_CONTROL, viewToken: OLD_VIEW, port: 8123 });
+  assert.deepStrictEqual(rotateTokens(configPath, "view"), ["viewToken"]);
+  let saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  assert.strictEqual(saved.controlToken, OLD_CONTROL);
+  assert.notStrictEqual(saved.viewToken, OLD_VIEW);
+  assert.strictEqual(saved.port, 8123);
+  assert.strictEqual(fs.statSync(configPath).mode & 0o777, 0o600);
+
+  rotateTokens(configPath);
+  saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  assert.notStrictEqual(saved.controlToken, OLD_CONTROL);
+  // The rotated file loads as-is: no second regeneration, no warning.
+  const { config, warnings } = load(configPath);
+  assert.strictEqual(config.controlToken, saved.controlToken);
+  assert.ok(!warnings.some((line) => /tokens regenerated/.test(line)));
+
+  assert.throws(() => rotateTokens(configPath, "admin"), /expected view, control or both/);
 });

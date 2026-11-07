@@ -401,6 +401,27 @@ function loadConfig(argv) {
   return { config, flags: args.flags, configPath, warnings, tls };
 }
 
+// Replace one or both tokens in config.json with fresh ones; nothing else in
+// the file changes. A running server keeps the old ones in memory until it
+// restarts (tools/airc rotate-tokens does that), which also ends every session
+// opened with them. Returns the names rotated.
+function rotateTokens(configPath, which = "both") {
+  const names = { view: ["viewToken"], control: ["controlToken"], both: ["viewToken", "controlToken"] }[which];
+  if (!names) {
+    throw new Error(`rotate: expected view, control or both, got ${which}`);
+  }
+  const fileConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  for (const name of names) {
+    fileConfig[name] = generateToken();
+  }
+  fileConfig.tokenEpoch = TOKEN_EPOCH;
+  // Write-then-rename so a crash can't leave a half-written config behind.
+  const temporary = `${configPath}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(fileConfig, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporary, configPath);
+  return names;
+}
+
 function localLanAddresses(port) {
   const addresses = [];
   let interfaces;
@@ -466,6 +487,7 @@ function pairingPayload(config, actualBaseUrl = "", tls = null) {
 
 module.exports = {
   loadConfig,
+  rotateTokens,
   bookmarkUrl,
   pairingPayload,
   localLanAddresses,

@@ -2,6 +2,7 @@ config.json
 .airc-server.pid
 .airc-server.json
 .airc-server.log
+.airc-server.log.1
 .airc-tls-key.pem
 .airc-tls-cert.pem
 node_modules/

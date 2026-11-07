@@ -63,7 +63,8 @@ Runtime state is written to ignored files:
 
 - `.airc-server.pid`
 - `.airc-server.json`
-- `.airc-server.log`
+- `.airc-server.log` (moved to `.airc-server.log.1` at the next start once it
+  passes 5 MiB; one old log is kept)
 
 Airc does not currently install or use a systemd unit. The wrapper starts a
 detached Node process and manages it through those state files.
@@ -84,7 +85,9 @@ Re-pair after changing:
 
 - server URL
 - server port
-- `viewToken` or `controlToken`
+- `viewToken` or `controlToken` (`tools/airc rotate-tokens [view|control]`
+  replaces both, or one, and restarts a running server, which also ends every
+  session opened with the old token)
 - the upgrade to end-to-end encryption: the first start regenerates both tokens
   (the old ones crossed tunnels in plaintext), logs a warning saying so, and
   every client needs the new app build and a fresh pairing. Browser links now

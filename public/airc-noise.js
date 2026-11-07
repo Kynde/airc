@@ -358,7 +358,9 @@
       });
       if (!response.ok) {
         // A wrong token and an unreachable server look alike on purpose.
-        throw new Error(`e2e handshake refused (${response.status})`);
+        const error = new Error(`e2e handshake refused (${response.status})`);
+        error.status = response.status;
+        throw error;
       }
       const reply = decodeJson(hs.readMessage(new Uint8Array(await response.arrayBuffer())));
       const { send, receive } = hs.split();

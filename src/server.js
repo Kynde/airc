@@ -28,6 +28,8 @@ const STATIC_ASSETS = {
   "/fonts/FiraCode-Regular.ttf": ["fonts/FiraCode-Regular.ttf", "font/ttf", IMMUTABLE],
   "/app.css": ["app.css", "text/css; charset=utf-8", "no-store"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8", "no-store"],
+  "/airc-noise.js": ["airc-noise.js", "text/javascript; charset=utf-8", "no-store"],
+  "/airc-crypto.js": ["airc-crypto.js", "text/javascript; charset=utf-8", "no-store"],
   "/favicon.ico": ["favicon.ico", "image/x-icon", IMMUTABLE],
   "/site.webmanifest": ["site.webmanifest", "application/manifest+json; charset=utf-8", "no-store"],
   "/icons/favicon-16x16.png": ["icons/favicon-16x16.png", "image/png", IMMUTABLE],
@@ -1073,6 +1075,13 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       return;
     }
 
+    // The page shell carries no data and no token (that's in the #k= fragment,
+    // which browsers never send); everything it shows comes over /api/e2e.
+    if ((url.pathname === "/" || url.pathname === "/index.html") && request.method === "GET") {
+      sendFile(response, "index.html", "text/html; charset=utf-8", "no-store");
+      return;
+    }
+
     if (url.pathname === "/api/e2e/hs" || url.pathname === "/api/e2e") {
       if (request.method !== "POST") {
         notFound(response);
@@ -1129,10 +1138,6 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       extraHeaders["Set-Cookie"] = authCookie(auth.token);
     }
 
-    if ((url.pathname === "/" || url.pathname === "/index.html") && request.method === "GET") {
-      sendFile(response, "index.html", "text/html; charset=utf-8", "no-store", extraHeaders);
-      return;
-    }
     if (url.pathname === "/probe" && request.method === "GET") {
       sendFile(response, "probe.html", "text/html; charset=utf-8", "no-store", extraHeaders);
       return;

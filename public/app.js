@@ -43,19 +43,49 @@
     pickerClose: document.getElementById("picker-close"),
   };
 
-  const params = new URLSearchParams(location.search);
-  if (params.get("k")) {
-    localStorage.setItem("airc_token", params.get("k"));
+  // Pairing links carry the token in the fragment (#k=), which the browser
+  // never sends; an old ?k= link still works. Either way it moves to
+  // localStorage and out of the address bar.
+  const linkToken = new URLSearchParams(location.hash.slice(1)).get("k")
+    || new URLSearchParams(location.search).get("k");
+  if (linkToken) {
+    localStorage.setItem("airc_token", linkToken);
     history.replaceState(null, "", location.pathname);
   }
   const token = localStorage.getItem("airc_token") || "";
-  const headers = (extra = {}) => {
-    const out = { ...extra };
-    if (token) {
-      out["X-Airc-Auth"] = token;
+
+  // Everything after the page shell is end-to-end encrypted under the token
+  // (docs/e2e-encryption.md): requests over /api/e2e, the stream over
+  // /api/e2e/ws. The token itself never goes over the wire.
+  const noise = window.AircNoise.createNoise(window.AircCrypto.primitives);
+  const e2e = token ? new window.AircNoise.Client({ noise, token, client: "web" }) : null;
+
+  // A fetch-shaped answer ({ ok, status, headers.get, json }) for one API call.
+  // A refused handshake (wrong token) reads as its status, like the plaintext
+  // 404 it replaces; transport failures throw, like fetch.
+  async function api(path, { method = "GET", query = "", body = "", headers = {} } = {}) {
+    let reply = { status: 404, headers: {}, body: "" };
+    if (e2e) {
+      try {
+        reply = await e2e.request(method, path, { query: String(query), body, headers });
+      } catch (error) {
+        if (!error.status) {
+          throw error;
+        }
+        reply = { status: error.status, headers: {}, body: "" };
+      }
     }
-    return out;
-  };
+    const header = (name) => {
+      const found = Object.entries(reply.headers || {}).find(([key]) => key.toLowerCase() === name.toLowerCase());
+      return found ? found[1] : null;
+    };
+    return {
+      ok: reply.status >= 200 && reply.status < 300,
+      status: reply.status,
+      headers: { get: header },
+      json: async () => JSON.parse(reply.body),
+    };
+  }
 
   let cfg = { pollMs: 700, pollIdleMaxMs: 2500, fontSizeDefault: 13, theme: "dark", resizeToViewport: false, canControl: false };
   let etag = null;
@@ -280,10 +310,8 @@
     if (!cfg.canControl) {
       return;
     }
-    const response = await fetch("/api/tmux/input", {
+    const response = await api("/api/tmux/input", {
       method: "POST",
-      cache: "no-store",
-      headers: headers({ "Content-Type": "application/json" }),
       body: JSON.stringify({ ...viewedTarget(), ...payload }),
     });
     if (!response.ok) {
@@ -386,10 +414,8 @@
     daisPending = true;
     renderDais();
     try {
-      const response = await fetch("/api/dais/dictate", {
+      const response = await api("/api/dais/dictate", {
         method: "POST",
-        cache: "no-store",
-        headers: headers({ "Content-Type": "application/json" }),
         body: JSON.stringify({ ...viewedTarget(), action }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -423,7 +449,7 @@
       return;
     }
     try {
-      const response = await fetch("/api/dais/status", { cache: "no-store", headers: headers() });
+      const response = await api("/api/dais/status");
       if (!response.ok) {
         daisState.available = false;
       } else {
@@ -515,7 +541,7 @@
 
   async function updateStatus() {
     try {
-      const response = await fetch("/api/status", { cache: "no-store", headers: headers() });
+      const response = await api("/api/status");
       if (!response.ok) {
         return;
       }
@@ -733,38 +759,35 @@
 
   function websocketUrl() {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const query = new URLSearchParams();
-    if (token) {
-      query.set("k", token);
-    }
-    return `${protocol}//${location.host}/api/tmux/ws?${query}`;
+    return `${protocol}//${location.host}/api/e2e/ws`;
   }
 
+  // ws is an encrypted channel; send() is a no-op until its handshake is done.
   function sendViewState() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!ws) {
       return;
     }
     if (viewMode === "window") {
       const cells = cfg.resizeToViewport ? fitCells() : {};
-      ws.send(JSON.stringify({
+      ws.send({
         type: "view",
         mode: "window",
         window: pinnedWindow,
         session: followSession,
         cols: cells.cols,
         rows: cells.rows,
-      }));
+      });
       return;
     }
     const cells = cfg.resizeToViewport && !pinned ? fitCells() : {};
-    ws.send(JSON.stringify({
+    ws.send({
       type: "view",
       pane: pinned,
       // Sent even with a pin so a vanished pin falls back to its own session.
       session: followSession,
       cols: cells.cols,
       rows: cells.rows,
-    }));
+    });
   }
 
   function startPollingFallback() {
@@ -782,49 +805,33 @@
       startPollingFallback();
       return;
     }
-    try {
-      ws = new WebSocket(websocketUrl());
-    } catch {
-      startPollingFallback();
-      return;
-    }
-    ws.addEventListener("open", () => {
+    ws = new window.AircNoise.Channel({ noise, token, client: "web", url: websocketUrl() });
+    ws.onopen = () => {
       etag = null;
       sendViewState();
-    });
-    ws.addEventListener("message", (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === "frame") {
-          if (!paused) {
-            dispatchFrame(payload.frame);
-          }
-        } else if (payload.type === "heartbeat") {
-          lastOkAt = Date.now();
-        } else if (payload.type === "attention") {
-          renderAttention(payload.items);
+    };
+    ws.onmessage = (payload) => {
+      if (payload.type === "frame") {
+        if (!paused) {
+          dispatchFrame(payload.frame);
         }
-      } catch {
-        // Ignore malformed stream messages and keep the socket alive.
+      } else if (payload.type === "heartbeat") {
+        lastOkAt = Date.now();
+      } else if (payload.type === "attention") {
+        renderAttention(payload.items);
       }
-    });
-    ws.addEventListener("close", startPollingFallback);
-    ws.addEventListener("error", () => {
-      try {
-        ws.close();
-      } catch {
-        startPollingFallback();
-      }
-    });
+    };
+    ws.onclose = startPollingFallback;
+    try {
+      ws.connect();
+    } catch {
+      startPollingFallback();
+    }
   }
 
   async function tick() {
     const query = frameQuery();
-    const requestHeaders = headers();
-    if (etag) {
-      requestHeaders["If-None-Match"] = etag;
-    }
-    const response = await fetch(`/api/tmux/frame?${query}`, { cache: "no-store", headers: requestHeaders });
+    const response = await api("/api/tmux/frame", { query, headers: etag ? { "If-None-Match": etag } : {} });
     if (response.status === 304) {
       lastOkAt = Date.now();
       misses += 1;
@@ -860,7 +867,7 @@
       return;
     }
     try {
-      const response = await fetch("/api/attention", { cache: "no-store", headers: headers() });
+      const response = await api("/api/attention");
       if (response.ok) {
         renderAttention((await response.json()).items);
       }
@@ -1121,7 +1128,7 @@
   }
 
   async function openPicker() {
-    const response = await fetch("/api/tmux/panes", { cache: "no-store", headers: headers() });
+    const response = await api("/api/tmux/panes");
     const payload = await response.json();
     el.pickerList.replaceChildren();
 
@@ -1304,10 +1311,10 @@
     applyMobileView();
     applyTheme(localStorage.getItem("airc_theme") || cfg.theme);
     try {
-      const response = await fetch("/api/config", { cache: "no-store", headers: headers() });
+      const response = await api("/api/config");
       if (response.status === 404) {
         el.state.textContent = "unauthorized";
-        el.term.textContent = "Not authorized. Reopen a URL that includes ?k=<token>.";
+        el.term.textContent = "Not authorized. Reopen the pairing link (it ends in #k=<token>).";
         return;
       }
       cfg = { ...cfg, ...(await response.json()) };

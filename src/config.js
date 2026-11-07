@@ -185,7 +185,7 @@ function ensureTlsMaterials(config, warnings) {
 
 const TUNNEL_NAMES = ["ngrok", "tailscale", "external"];
 
-// Trailing slashes would produce "https://host//?k=..." in every bookmark and
+// Trailing slashes would produce "https://host//#k=..." in every bookmark and
 // pairing payload, so normalize once at load — and reject a bare hostname here
 // rather than at the first tap on a dead bookmark.
 function normalizeTunnelUrl(value, label) {
@@ -412,7 +412,9 @@ function publicBaseUrl(config, actualBaseUrl = "") {
 
 function bookmarkUrl(config, level = "view", actualBaseUrl = "") {
   const token = level === "control" ? config.controlToken : config.viewToken;
-  return `${publicBaseUrl(config, actualBaseUrl)}/?k=${token}`;
+  // A fragment, not a query: browsers never send it, so the token stays off the
+  // wire (and out of tunnel logs) even on the first page load.
+  return `${publicBaseUrl(config, actualBaseUrl)}/#k=${token}`;
 }
 
 function pairingPayload(config, actualBaseUrl = "", tls = null) {

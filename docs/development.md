@@ -75,9 +75,14 @@ Pairing payload behavior:
 - `GET /healthz`
 - `WebSocket /api/tmux/ws`
 
-Unauthenticated static assets:
+Unauthenticated static assets (the browser's token is in the `#k=` fragment,
+which is never sent; everything after the page shell goes over `/api/e2e`):
 
+- `/` and `/index.html` (the page shell)
 - `/app.js`
+- `/airc-noise.js` (the shared Noise core)
+- `/airc-crypto.js` (vendored @noble bundle, rebuilt by
+  `scripts/vendor/build-airc-crypto.sh`; don't edit by hand)
 - `/app.css`
 - `/fonts/FiraCode-Regular.ttf`
 

@@ -14,3 +14,4 @@ android-app/keystore.properties
 android-app/*.jks
 *.apk
 *.aab
+.airc.sock

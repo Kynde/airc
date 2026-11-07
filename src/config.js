@@ -373,6 +373,11 @@ function loadConfig(argv) {
     // Best effort; a read-only/owned-elsewhere config is not fatal.
   }
 
+  // Local tools (tools/airc, agent hooks) talk to the server over this Unix
+  // socket, which counts as control without a token: only the owning user can
+  // open it (0600), and no tunnel can reach it. Derived, never persisted.
+  config.localSocket = path.join(path.dirname(path.resolve(configPath)), ".airc.sock");
+
   const warnings = tokenWarnings(config);
   const tls = ensureTlsMaterials(config, warnings);
 

@@ -61,16 +61,21 @@ In `config.json` (see `config.example.json`):
 ## Wiring agent hooks (optional)
 
 Hooks make detection exact for agents that support them. Each hook POSTs the
-pane id (`$TMUX_PANE`) and an event to the local server with the control token.
+pane id (`$TMUX_PANE`) and an event to the server over its local Unix socket,
+`.airc.sock` next to `config.json`. The socket is owner-only (`0600`) and
+counts as control, so no token is involved and nothing goes over the network.
 
 `event` is one of `waiting` (needs interaction), `busy` (working), `idle`
-(finished). Example:
+(finished). Example, with Airc checked out at `~/airc`:
 
 ```sh
-curl -s -XPOST "http://127.0.0.1:8080/api/agent/event?k=$AIRC_CONTROL_TOKEN" \
+curl -s --unix-socket ~/airc/.airc.sock -XPOST http://airc/api/agent/event \
   -H 'Content-Type: application/json' \
   -d "{\"paneId\":\"$TMUX_PANE\",\"event\":\"waiting\"}"
 ```
+
+(The `airc` in the URL is only the HTTP Host; the socket decides where the
+request goes.)
 
 ### Claude Code
 
@@ -101,7 +106,8 @@ extension API (`omp --hook <file>`) emits `tool_approval_requested` /
   waiting → idle-input → busy, then oldest within a rank. Used by the HTTP-poll
   fallback; websocket clients get the same list pushed as
   `{ type: "attention", items: [...] }`.
-- `POST /api/agent/event` (control token) — `{ paneId, event }`.
+- `POST /api/agent/event` (control: the local socket, or a control session) —
+  `{ paneId, event }`.
 
 Each item: `{ paneId, session, windowName, paneIndex, agent, state, since, source }`,
 where `state` is `waiting`, `idle-input`, or `busy`.

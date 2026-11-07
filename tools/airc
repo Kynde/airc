@@ -2,6 +2,7 @@
 "use strict";
 
 const fs = require("node:fs");
+const http = require("node:http");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 
@@ -99,28 +100,40 @@ function activeConfig() {
   return load(state?.serverArgs || []);
 }
 
+// GET a JSON endpoint over the server's local Unix socket (config.localSocket),
+// which counts as control without a token, so none goes over the network.
+function localJson(config, pathname) {
+  return new Promise((resolve, reject) => {
+    const request = http.get({ socketPath: config.localSocket, path: pathname, timeout: 5000 }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        if (response.statusCode < 200 || response.statusCode > 299) {
+          reject(new Error(`HTTP ${response.statusCode}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.on("timeout", () => request.destroy(new Error("timeout")));
+    request.on("error", reject);
+  });
+}
+
 async function healthz(config) {
   try {
-    const response = await fetch(`http://127.0.0.1:${config.port}/healthz`, {
-      headers: { "X-Airc-Auth": config.controlToken },
-    });
-    if (!response.ok) {
-      return null;
-    }
-    return await response.json();
+    return await localJson(config, "/healthz");
   } catch {
     return null;
   }
 }
 
-async function authenticatedJson(config, pathname) {
-  const response = await fetch(`http://127.0.0.1:${config.port}${pathname}`, {
-    headers: { "X-Airc-Auth": config.controlToken },
-  });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  return response.json();
+function authenticatedJson(config, pathname) {
+  return localJson(config, pathname);
 }
 
 // What to show as "the session(s)". The configured scope may be a glob (the

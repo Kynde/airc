@@ -1082,7 +1082,8 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       return;
     }
 
-    const auth = authLevel(request, url, config);
+    // The local Unix socket is control by construction (see config.localSocket).
+    const auth = request.aircLocal ? { level: "control", token: "", presented: "" } : authLevel(request, url, config);
     const authorized = auth.level !== "none";
     const ip = peerAddress(request);
 
@@ -1650,11 +1651,39 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
   if (tlsServer) {
     tlsServer.on("upgrade", handleUpgrade);
   }
+  const localServer = http.createServer((request, response) => {
+    request.aircLocal = true;
+    handleRequest(request, response);
+  });
+
+  function listenLocal() {
+    const socketPath = config.localSocket;
+    if (!socketPath) {
+      return;
+    }
+    // A leftover socket from a crashed run would make listen() fail. Only ever
+    // remove a socket, never a regular file someone put there.
+    try {
+      if (fs.lstatSync(socketPath).isSocket()) {
+        fs.unlinkSync(socketPath);
+      }
+    } catch {
+      // nothing there
+    }
+    localServer.on("error", (error) => {
+      log(`WARNING: local socket ${socketPath} unavailable: ${error.message}`);
+    });
+    localServer.listen(socketPath, () => {
+      // Connecting needs write permission on the socket; owner only.
+      fs.chmodSync(socketPath, 0o600);
+    });
+  }
 
   // Lifecycle facade so main() drives both listeners through one object.
   return {
     listen(port, host, callback) {
       httpServer.listen(port, host, callback);
+      listenLocal();
       if (tlsServer) {
         tlsServer.listen(config.tls.port, host, () => {
           log(`airc tmux remote TLS listening on https://${host}:${config.tls.port}`);
@@ -1672,6 +1701,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     address() {
       return httpServer.address();
     },
+    get localSocketPath() {
+      return localServer.listening ? config.localSocket : "";
+    },
     closeWebSockets() {
       for (const socket of wsSockets) {
         socket.destroy();
@@ -1682,10 +1714,14 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       if (tlsServer) {
         tlsServer.close();
       }
+      if (localServer.listening) {
+        localServer.close(); // also unlinks the socket file
+      }
       httpServer.close(callback);
     },
     closeIdleConnections() {
       httpServer.closeIdleConnections();
+      localServer.closeIdleConnections();
       if (tlsServer) {
         tlsServer.closeIdleConnections();
       }

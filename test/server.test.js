@@ -169,3 +169,24 @@ test("forged X-Forwarded-For can't dodge the failed-auth block, and a valid toke
     console.log = original;
   }
 });
+
+test("the local Unix socket is owner-only and counts as control without a token", async () => {
+  const http = require("node:http");
+  // The socket starts listening alongside the TCP port; give it a moment.
+  for (let tries = 0; tries < 50 && !server.localSocketPath; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const socketPath = server.localSocketPath;
+  assert.ok(socketPath && fs.existsSync(socketPath), "socket exists");
+  assert.strictEqual(fs.statSync(socketPath).mode & 0o777, 0o600);
+  const status = (pathname) => new Promise((resolve, reject) => {
+    http.get({ socketPath, path: pathname }, (response) => {
+      response.resume();
+      resolve(response.statusCode);
+    }).on("error", reject);
+  });
+  assert.strictEqual(await status("/healthz"), 200);
+  assert.strictEqual(await status("/api/pairing"), 200);
+  // The same paths over TCP without a token stay closed.
+  assert.strictEqual(statusOf(await rawRequest("GET /api/pairing HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")), 404);
+});

@@ -12,6 +12,8 @@ sessions are tried even when dead :: a literal (non-glob) configured session sta
 
 ## Auth & secrets
 
+Android certificate pin is additive trust, not mandatory server identity :: Pinning.kt accepts the paired certificate OR a platform-trusted certificate with a valid hostname; MainActivity.secureLan upgrades LAN HTTP to HTTPS when pairing includes certFingerprint/tlsPort, but public tunnel endpoints use ordinary CA trust. This does not authenticate the Airc origin through a TLS-terminating tunnel.
+ngrok HTTP tunnel terminates outside Airc :: src/ngrok.js launches `ngrok http <httpPort>`; the separate Airc TLS listener is not used by this tunnel. The tunnel operator can read bearer tokens, terminal frames, and input; origin HTTPS alone would not hide them if public TLS still terminates at the provider.
 protected routes return 404, not 401 :: deliberate, to avoid advertising the private surface; an agent expecting 401/403 on bad auth will be surprised.
 tokens are auto-generated AND written back :: first `loadConfig` with empty tokens generates them and rewrites config.json (mode 0600). A missing token is not an error — it's a one-time provisioning step. Clearing a token in config.json regenerates a strong one on next start.
 weak configured tokens are accepted :: non-empty tokens shorter than 32 chars are NOT replaced automatically; startup logs a warning and keeps running. To rotate, clear the field and restart so loadConfig generates a strong token.

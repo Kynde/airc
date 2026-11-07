@@ -18,6 +18,7 @@ const NODE_GLOBALS = {
   clearTimeout: "readonly",
   clearInterval: "readonly",
   fetch: "readonly",
+  Response: "readonly",
   URL: "readonly",
 };
 
@@ -69,7 +70,7 @@ module.exports = [
     // Shared by the browser (plain <script>) and the server (require()).
     files: ["public/airc-noise.js"],
     languageOptions: {
-      globals: { ...BROWSER_GLOBALS, module: "writable", TextEncoder: "readonly" },
+      globals: { ...BROWSER_GLOBALS, module: "writable", TextEncoder: "readonly", TextDecoder: "readonly" },
     },
   },
 ];

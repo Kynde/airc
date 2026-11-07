@@ -258,8 +258,179 @@
       }
     }
 
-    return { Handshake, CipherState };
+    // RFC 5869 HKDF-SHA256 with one output block: turns a token into the
+    // 32-byte Noise psk. (Noise's own HKDF above is a different construction.)
+    function derivePsk(token) {
+      const prk = p.hmacSha256(new Uint8Array(32), utf8(token));
+      return p.hmacSha256(prk, concat(PSK_INFO, Uint8Array.of(0x01)));
+    }
+
+    return { Handshake, CipherState, derivePsk };
   }
 
-  return { PROTOCOL_NAME, createNoise, concat, utf8 };
+  // ---------------------------------------------------------------------------
+  // Airc's envelope around the Noise transport (docs/e2e-encryption.md).
+  //
+  //   POST /api/e2e/hs   body: Noise msg1          -> 200 body: Noise msg2
+  //   POST /api/e2e      body: header | ciphertext -> 200 body: ciphertext
+  //
+  // header = version(1) | session(16) | seq(8, big-endian). The request is
+  // encrypted client->server with nonce = seq and AD = header|"req"; its
+  // response server->client with the same seq and AD = header|"res", which
+  // binds each response to its request.
+
+  const E2E_VERSION = 1;
+  const PROLOGUE = utf8("airc-e2e-v1");
+  const PSK_INFO = utf8("airc e2e v1 psk");
+  const SESSION_BYTES = 16;
+  const HEADER_BYTES = 1 + SESSION_BYTES + 8;
+  const REQ = utf8("req");
+  const RES = utf8("res");
+
+  function encodeHeader(session, seq) {
+    const header = new Uint8Array(HEADER_BYTES);
+    header[0] = E2E_VERSION;
+    header.set(session, 1);
+    new DataView(header.buffer).setBigUint64(1 + SESSION_BYTES, BigInt(seq), false);
+    return header;
+  }
+
+  // Returns null for anything that isn't a well-formed version-1 envelope.
+  function decodeEnvelope(bytes) {
+    if (bytes.length < HEADER_BYTES + 16 || bytes[0] !== E2E_VERSION) {
+      return null;
+    }
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const seq = view.getBigUint64(1 + SESSION_BYTES, false);
+    if (seq > BigInt(Number.MAX_SAFE_INTEGER)) {
+      return null;
+    }
+    return {
+      header: bytes.subarray(0, HEADER_BYTES),
+      session: bytes.subarray(1, 1 + SESSION_BYTES),
+      seq: Number(seq),
+      ciphertext: bytes.subarray(HEADER_BYTES),
+    };
+  }
+
+  function toHex(bytes) {
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  function fromHex(text) {
+    if (typeof text !== "string" || !/^([0-9a-f]{2})*$/.test(text)) {
+      throw new Error("bad hex");
+    }
+    const out = new Uint8Array(text.length / 2);
+    for (let index = 0; index < out.length; index += 1) {
+      out[index] = parseInt(text.slice(index * 2, index * 2 + 2), 16);
+    }
+    return out;
+  }
+
+  const decodeJson = (bytes) => JSON.parse(new TextDecoder().decode(bytes));
+  const encodeJson = (value) => utf8(JSON.stringify(value));
+
+  // The client half: one HTTP session, (re)established on demand.
+  // options: { noise, token, client: "browser" | "android" | ..., version?,
+  //            baseUrl?: "" (same origin), fetch?: globalThis.fetch }
+  // request(method, path, { query?, body?, headers? }) resolves to
+  // { status, headers, body } with body as text, like the plaintext API.
+  class Client {
+    constructor({ noise, token, client, version = "", baseUrl = "", fetch: fetchImpl }) {
+      this.noise = noise;
+      this.psk = noise.derivePsk(token);
+      this.hello = { client, version };
+      this.baseUrl = baseUrl;
+      this.fetch = fetchImpl || ((...args) => globalThis.fetch(...args));
+      this.session = null;
+      this.pending = null;
+      this.level = "";
+    }
+
+    async handshake() {
+      const hs = new this.noise.Handshake({ initiator: true, psk: this.psk, prologue: PROLOGUE });
+      const response = await this.fetch(`${this.baseUrl}/api/e2e/hs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: hs.writeMessage(encodeJson(this.hello)),
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        // A wrong token and an unreachable server look alike on purpose.
+        throw new Error(`e2e handshake refused (${response.status})`);
+      }
+      const reply = decodeJson(hs.readMessage(new Uint8Array(await response.arrayBuffer())));
+      const { send, receive } = hs.split();
+      this.level = reply.level;
+      this.session = { id: fromHex(reply.session), send, receive, seq: 0 };
+      return reply;
+    }
+
+    async ensureSession() {
+      if (this.session) {
+        return this.session;
+      }
+      // Concurrent first requests share one handshake.
+      if (!this.pending) {
+        this.pending = this.handshake().finally(() => {
+          this.pending = null;
+        });
+      }
+      await this.pending;
+      return this.session;
+    }
+
+    async request(method, path, { query = "", body = "", headers = {} } = {}) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const session = await this.ensureSession();
+        const seq = session.seq;
+        session.seq += 1; // never reused, even if this attempt fails
+        const header = encodeHeader(session.id, seq);
+        const plaintext = encodeJson({ method, path, query, headers, body });
+        const ciphertext = session.send.sendWithNonce(seq, concat(header, REQ), plaintext);
+        const response = await this.fetch(`${this.baseUrl}/api/e2e`, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: concat(header, ciphertext),
+          cache: "no-store",
+        });
+        if (response.status === 401) {
+          // Unknown or expired session (e.g. the server restarted): one fresh
+          // handshake, then give up. Unauthenticated, so at worst a tunnel
+          // forces a re-handshake, which it could do by dropping traffic.
+          if (this.session === session) {
+            this.session = null;
+          }
+          continue;
+        }
+        if (!response.ok) {
+          throw new Error(`e2e request failed (${response.status})`);
+        }
+        const sealed = new Uint8Array(await response.arrayBuffer());
+        return decodeJson(session.receive.receiveWithNonce(seq, concat(header, RES), sealed));
+      }
+      throw new Error("e2e session could not be re-established");
+    }
+  }
+
+  return {
+    PROTOCOL_NAME,
+    E2E_VERSION,
+    PROLOGUE,
+    SESSION_BYTES,
+    HEADER_BYTES,
+    REQ,
+    RES,
+    createNoise,
+    concat,
+    utf8,
+    encodeHeader,
+    decodeEnvelope,
+    toHex,
+    fromHex,
+    encodeJson,
+    decodeJson,
+    Client,
+  };
 });

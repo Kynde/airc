@@ -7,12 +7,14 @@ const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
 const path = require("node:path");
+const { Readable } = require("node:stream");
 const zlib = require("node:zlib");
 
 const { ansiToHtml } = require("./ansi");
 const { authLevel, authCookie, tokenEquals } = require("./auth");
 const { loadConfig, bookmarkUrl, pairingPayload, localLanAddresses, advertisedUrl, tunnelUrl } = require("./config");
 const dais = require("./dais");
+const { createE2e, HANDSHAKE_LIMIT_BYTES } = require("./e2e");
 const { detectPaneState, STATE } = require("./detect");
 const { startNgrok } = require("./ngrok");
 const tmux = require("./tmux");
@@ -43,6 +45,9 @@ const AUTH_FAIL_WINDOW_MS = 60 * 1000;
 const AUTH_BLOCK_MS = 5 * 60 * 1000;
 const AUTH_FAIL_MAX_ENTRIES = 1024; // distinct addresses tracked at once
 const WS_PER_IP_LIMIT = 8; // concurrent websockets per client address
+// An encrypted request carries at most an INPUT_LIMIT_BYTES body, JSON-quoted
+// inside the envelope; leave room for that escaping and the framing.
+const E2E_ENVELOPE_LIMIT = 8 * INPUT_LIMIT_BYTES;
 
 // Mask token values before anything reaches the (persistent, possibly
 // world-readable) log: the `?k=<token>` query param and the `"token":"<token>"`
@@ -191,6 +196,24 @@ function readBatteryStatus() {
     ? `${primary.capacity !== null ? `${primary.capacity}%` : "battery"}${primary.status ? ` ${primary.status.toLowerCase()}` : ""}`
     : "";
   return { available: batteries.length > 0, batteries, summary };
+}
+
+function readBody(request, limit) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    request.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(new Error("body too large"));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => resolve(Buffer.concat(chunks)));
+    request.on("error", reject);
+  });
 }
 
 function readJsonBody(request) {
@@ -1020,7 +1043,10 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       send(response, 400, "text/plain; charset=utf-8", "bad request\n");
       return;
     }
-    log(`${clientAddress(request)} ${request.method} ${url.pathname}`);
+    // Encrypted requests are logged once their inner path is known.
+    if (url.pathname !== "/api/e2e") {
+      log(`${clientAddress(request)} ${request.method} ${url.pathname}`);
+    }
 
     // Defense-in-depth headers on every response. `style-src 'unsafe-inline'`
     // is required because captured truecolor spans carry inline `style=` color
@@ -1044,9 +1070,17 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       return;
     }
 
+    if (url.pathname === "/api/e2e/hs" || url.pathname === "/api/e2e") {
+      if (request.method !== "POST") {
+        notFound(response);
+        return;
+      }
+      handleE2e(request, response, url.pathname === "/api/e2e/hs");
+      return;
+    }
+
     const auth = authLevel(request, url, config);
     const authorized = auth.level !== "none";
-    const canControl = auth.level === "control";
     const ip = peerAddress(request);
 
     // A wrong token from a throttled address is dropped before any work.
@@ -1059,6 +1093,14 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     } else if (authorized) {
       clearFailedAuth(ip);
     }
+    route(request, response, url, auth);
+  }
+
+  // Everything behind authentication, for a plaintext request (auth from its
+  // token) and a decrypted one (auth from its session) alike.
+  function route(request, response, url, auth) {
+    const authorized = auth.level !== "none";
+    const canControl = auth.level === "control";
 
     // /healthz now requires a token like every other endpoint; the local CLI
     // authenticates its probe with the control token. This removes the previous
@@ -1201,6 +1243,130 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     }
     notFound(response);
   }
+
+  const e2e = createE2e({
+    keys: () => [
+      { level: "control", token: config.controlToken },
+      { level: "view", token: config.viewToken },
+    ],
+    serverVersion: SERVER_VERSION,
+  });
+
+  // POST /api/e2e/hs (handshake) and POST /api/e2e (an encrypted request).
+  // Neither carries a token: the handshake authenticates by the Noise psk, and
+  // a request by its session's keys.
+  function handleE2e(request, response, isHandshake) {
+    const ip = peerAddress(request);
+    readBody(request, isHandshake ? HANDSHAKE_LIMIT_BYTES : E2E_ENVELOPE_LIMIT)
+      .then((body) => {
+        if (isHandshake) {
+          // A failed handshake is a wrong token, so it feeds the same throttle.
+          if (rateLimited(ip)) {
+            notFound(response);
+            return;
+          }
+          const result = e2e.handshake(body);
+          if (!result) {
+            recordFailedAuth(ip);
+            notFound(response);
+            return;
+          }
+          clearFailedAuth(ip);
+          sendBytes(response, result.reply);
+          return;
+        }
+        const opened = e2e.open(body);
+        if (!opened) {
+          send(response, 401, "text/plain; charset=utf-8", "e2e: handshake again\n");
+          return;
+        }
+        dispatchE2e(request, response, opened);
+      })
+      .catch(() => {
+        if (!response.headersSent) {
+          send(response, 400, "text/plain; charset=utf-8", "bad request\n");
+        }
+      });
+  }
+
+  function sendBytes(response, bytes) {
+    response.writeHead(200, {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": bytes.length,
+      "Cache-Control": "no-store",
+    });
+    response.end(bytes);
+  }
+
+  // Run a decrypted request through the normal routing: a stand-in request
+  // (its body as a stream) and a stand-in response that captures what the
+  // handler writes, which is then sealed under the request's seq.
+  function dispatchE2e(outerRequest, outerResponse, opened) {
+    const inner = opened.request || {};
+    const reply = (status, body, headers = {}) => {
+      sendBytes(outerResponse, e2e.seal(opened, { status, headers, body }));
+    };
+    const method = inner.method === "POST" ? "POST" : inner.method === "GET" ? "GET" : "";
+    const pathOk = typeof inner.path === "string"
+      && (inner.path === "/healthz" || (inner.path.startsWith("/api/") && !inner.path.startsWith("/api/e2e")));
+    const query = typeof inner.query === "string" ? inner.query : "";
+    let url = null;
+    if (method && pathOk) {
+      try {
+        url = new URL(`${inner.path}${query ? `?${query.replace(/^\?/, "")}` : ""}`, "http://localhost");
+      } catch {
+        url = null;
+      }
+    }
+    if (!url || url.pathname !== inner.path) {
+      reply(400, "bad request\n");
+      return;
+    }
+    log(`${clientAddress(outerRequest)} e2e ${method} ${url.pathname}`);
+
+    const body = typeof inner.body === "string" ? inner.body : "";
+    const innerHeaders = inner.headers && typeof inner.headers === "object" ? inner.headers : {};
+    const request = Readable.from(body ? [Buffer.from(body)] : []);
+    request.method = method;
+    request.url = `${url.pathname}${url.search}`;
+    request.socket = outerRequest.socket;
+    request.headers = {};
+    if (typeof innerHeaders["If-None-Match"] === "string") {
+      request.headers["if-none-match"] = innerHeaders["If-None-Match"];
+    }
+    if (outerRequest.headers["x-forwarded-for"]) {
+      request.headers["x-forwarded-for"] = outerRequest.headers["x-forwarded-for"];
+    }
+
+    // Only what a client needs back crosses into the sealed response.
+    const KEEP = { etag: "ETag", "content-type": "Content-Type" };
+    const captured = {};
+    const response = {
+      headersSent: false,
+      setHeader(name, value) {
+        captured[String(name).toLowerCase()] = value;
+      },
+      writeHead(status, headers = {}) {
+        this.statusCode = status;
+        for (const [name, value] of Object.entries(headers)) {
+          this.setHeader(name, value);
+        }
+        this.headersSent = true;
+      },
+      end(chunk) {
+        const text = chunk == null ? "" : Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+        const headers = {};
+        for (const [lower, name] of Object.entries(KEEP)) {
+          if (captured[lower] !== undefined) {
+            headers[name] = String(captured[lower]);
+          }
+        }
+        reply(this.statusCode || 200, text, headers);
+      },
+    };
+    route(request, response, url, { level: opened.session.level, token: "" });
+  }
+
   const wsSockets = new Set();
 
   // One server-wide attention scan loop. It self-gates on viewerCount() so an

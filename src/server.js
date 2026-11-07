@@ -48,6 +48,7 @@ const WS_PER_IP_LIMIT = 8; // concurrent websockets per client address
 // An encrypted request carries at most an INPUT_LIMIT_BYTES body, JSON-quoted
 // inside the envelope; leave room for that escaping and the framing.
 const E2E_ENVELOPE_LIMIT = 8 * INPUT_LIMIT_BYTES;
+const E2E_WS_HANDSHAKE_MS = 10 * 1000; // an encrypted socket must handshake within this
 
 // Mask token values before anything reaches the (persistent, possibly
 // world-readable) log: the `?k=<token>` query param and the `"token":"<token>"`
@@ -284,9 +285,9 @@ function negotiateDeflate(header) {
   );
 }
 
-function websocketFrame(payload, deflate = false) {
+function websocketFrame(payload, deflate = false, binary = false) {
   let body = Buffer.from(payload);
-  let first = 0x81;
+  let first = binary ? 0x82 : 0x81;
   if (deflate && body.length >= WS_DEFLATE_MIN) {
     const compressed = deflateMessage(body);
     if (compressed.length < body.length) {
@@ -359,6 +360,8 @@ function readWebsocketMessages(state, chunk) {
     } else if (opcode === 0x1) {
       const text = (compressed ? inflateMessage(decoded) : decoded).toString("utf8");
       messages.push({ type: "text", text });
+    } else if (opcode === 0x2) {
+      messages.push({ type: "binary", data: compressed ? inflateMessage(decoded) : decoded });
     }
   }
   return messages;
@@ -1387,12 +1390,20 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       rejectUpgrade(socket, 400);
       return;
     }
-    if (url.pathname !== "/api/tmux/ws") {
+    // Two kinds of socket: /api/tmux/ws authenticates by token up front;
+    // /api/e2e/ws carries no token and authenticates by its first message, a
+    // Noise handshake, after which every message is encrypted.
+    const encrypted = url.pathname === "/api/e2e/ws";
+    if (!encrypted && url.pathname !== "/api/tmux/ws") {
       rejectUpgrade(socket);
       return;
     }
     const ip = peerAddress(request);
-    const auth = authLevel(request, url, config);
+    const auth = encrypted ? { level: "pending" } : authLevel(request, url, config);
+    if (encrypted && rateLimited(ip)) {
+      rejectUpgrade(socket);
+      return;
+    }
     if (auth.level === "none") {
       if (auth.presented && !rateLimited(ip)) {
         recordFailedAuth(ip);
@@ -1400,7 +1411,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       rejectUpgrade(socket);
       return;
     }
-    clearFailedAuth(ip);
+    if (!encrypted) {
+      clearFailedAuth(ip);
+    }
     if ((wsCounts.get(ip) || 0) >= WS_PER_IP_LIMIT) {
       log(`ws-limit: rejecting upgrade from ${ip} (>= ${WS_PER_IP_LIMIT} open)`);
       rejectUpgrade(socket, 400);
@@ -1411,7 +1424,8 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       rejectUpgrade(socket, 400);
       return;
     }
-    const deflate = negotiateDeflate(request.headers["sec-websocket-extensions"]);
+    // Ciphertext doesn't compress, so the encrypted socket never negotiates it.
+    const deflate = !encrypted && negotiateDeflate(request.headers["sec-websocket-extensions"]);
     const responseHeaders = [
       "HTTP/1.1 101 Switching Protocols",
       "Upgrade: websocket",
@@ -1445,10 +1459,18 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       // pane on every (re)connect before the pin arrives.
       viewReady: false,
       attentionJson: "",
+      cipher: null, // encrypted socket: { send, receive } once the handshake is done
     };
+    const EMPTY_AD = Buffer.alloc(0);
 
     function send(payload) {
-      if (!wsState.closed && socket.writable) {
+      if (wsState.closed || !socket.writable) {
+        return;
+      }
+      if (wsState.cipher) {
+        const sealed = wsState.cipher.send.send(EMPTY_AD, Buffer.from(JSON.stringify(payload)));
+        socket.write(websocketFrame(sealed, false, true));
+      } else {
         socket.write(websocketFrame(JSON.stringify(payload), wsState.deflate));
       }
     }
@@ -1497,10 +1519,58 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       }
     }
 
-    const timer = setInterval(() => sendFrame(false), config.pollMs);
-    send({ type: "hello", canControl: auth.level === "control", serverVersion: SERVER_VERSION });
-    // First frame is deferred until the client sends its `view` state, so we
-    // never flash the active pane before a pin is known.
+    let timer = null;
+    function start(level) {
+      timer = setInterval(() => sendFrame(false), config.pollMs);
+      send({ type: "hello", canControl: level === "control", serverVersion: SERVER_VERSION });
+      // First frame is deferred until the client sends its `view` state, so we
+      // never flash the active pane before a pin is known.
+    }
+    if (encrypted) {
+      // A socket that never completes its handshake doesn't get to sit on a slot.
+      const deadline = setTimeout(() => {
+        if (!wsState.cipher) {
+          socket.destroy();
+        }
+      }, E2E_WS_HANDSHAKE_MS);
+      socket.once("close", () => clearTimeout(deadline));
+    } else {
+      start(auth.level);
+    }
+
+    // The encrypted socket's first message is Noise msg1. Answer with msg2 and
+    // start; a wrong token counts against the throttle and closes the socket.
+    function handshake(message) {
+      const result = message.type === "binary" ? e2e.channel(message.data) : null;
+      if (!result) {
+        recordFailedAuth(ip);
+        socket.end(websocketCloseFrame());
+        return false;
+      }
+      clearFailedAuth(ip);
+      socket.write(websocketFrame(result.reply, false, true));
+      wsState.cipher = { send: result.send, receive: result.receive };
+      start(result.level);
+      return true;
+    }
+
+    // The JSON text of a client message, or null to ignore it. On the
+    // encrypted socket only binary messages that authenticate count, and one
+    // that doesn't ends the connection (the channel's counters can't recover).
+    function messageText(message) {
+      if (!encrypted) {
+        return message.type === "text" ? message.text : null;
+      }
+      if (message.type !== "binary") {
+        return null;
+      }
+      try {
+        return Buffer.from(wsState.cipher.receive.receive(EMPTY_AD, message.data)).toString("utf8");
+      } catch {
+        socket.end(websocketCloseFrame());
+        return undefined;
+      }
+    }
 
     socket.on("data", (chunk) => {
       let messages;
@@ -1515,11 +1585,21 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
           socket.end(websocketCloseFrame());
           return;
         }
-        if (message.type !== "text") {
+        if (encrypted && !wsState.cipher) {
+          if (!handshake(message)) {
+            return;
+          }
+          continue;
+        }
+        const text = messageText(message);
+        if (text === undefined) {
+          return;
+        }
+        if (text === null) {
           continue;
         }
         try {
-          const payload = JSON.parse(message.text);
+          const payload = JSON.parse(text);
           if (payload.type === "view") {
             wsState.pane = typeof payload.pane === "string" && /^%\d+$/.test(payload.pane) ? payload.pane : "";
             wsState.window = typeof payload.window === "string" && /^@\d+$/.test(payload.window) ? payload.window : "";

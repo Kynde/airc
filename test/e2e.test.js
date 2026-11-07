@@ -156,3 +156,64 @@ test("the replay window accepts reordering but never a repeat", () => {
   assert.ok(!accept(5), "fell out of the window");
   assert.ok(accept(6 + 1), "still inside the window");
 });
+
+// Open an encrypted socket and collect what arrives until `until(types)` holds
+// (by default: the hello) or the socket closes.
+function openChannel(token, onOpen, until = (types) => types.includes("hello")) {
+  return new Promise((resolve, reject) => {
+    const channel = new shared.Channel({ noise, token, client: "test", url: `${baseUrl.replace("http", "ws")}/api/e2e/ws` });
+    const received = [];
+    const timer = setTimeout(() => reject(new Error(`timeout; got ${JSON.stringify(received.map((m) => m.type))}`)), 4000);
+    channel.onopen = () => onOpen(channel, received);
+    channel.onmessage = (message) => {
+      received.push(message);
+      if (until(received.map((m) => m.type))) {
+        clearTimeout(timer);
+        resolve({ channel, received });
+      }
+    };
+    channel.onclose = () => {
+      clearTimeout(timer);
+      resolve({ channel, received, closed: true });
+    };
+    channel.connect();
+  });
+}
+
+test("the encrypted websocket handshakes and carries the hello at the session's level", async () => {
+  const viewer = await openChannel(VIEW, () => {});
+  assert.strictEqual(viewer.channel.level, "view");
+  assert.deepStrictEqual(viewer.received.map((m) => [m.type, m.canControl]), [["hello", false]]);
+  viewer.channel.close();
+  const controller = await openChannel(CONTROL, () => {});
+  assert.strictEqual(controller.received[0].canControl, true);
+  controller.channel.close();
+});
+
+test("the encrypted websocket refuses a wrong token", async () => {
+  const outcome = await openChannel("x".repeat(32), () => {});
+  assert.strictEqual(outcome.closed, true);
+  assert.strictEqual(outcome.channel.level, "");
+});
+
+test("a raw websocket can't skip the handshake or send plaintext", async () => {
+  // Plain text first: no handshake, so the server closes without a word.
+  const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/api/e2e/ws`);
+  const outcome = await new Promise((resolve) => {
+    const got = [];
+    ws.onopen = () => ws.send(JSON.stringify({ type: "view" }));
+    ws.onmessage = (event) => got.push(event.data);
+    ws.onclose = () => resolve(got);
+  });
+  assert.deepStrictEqual(outcome, []);
+});
+
+test("the encrypted websocket takes view state and answers with a frame or error", async () => {
+  // No tmux in the test environment is fine: the server still answers, sealed.
+  const outcome = await openChannel(VIEW, (channel) => {
+    channel.send({ type: "view", mode: "pane", cols: 80, rows: 24 });
+  }, (types) => types.includes("frame") || types.includes("error"));
+  const types = outcome.received.map((m) => m.type);
+  assert.ok(types.includes("frame") || types.includes("error"), JSON.stringify(types));
+  outcome.channel.close();
+});

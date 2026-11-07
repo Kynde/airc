@@ -20,6 +20,7 @@ const NODE_GLOBALS = {
   fetch: "readonly",
   Response: "readonly",
   URL: "readonly",
+  WebSocket: "readonly",
 };
 
 const BROWSER_GLOBALS = {

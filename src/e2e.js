@@ -67,9 +67,10 @@ function createE2e({ keys, serverVersion = "", now = () => Date.now() }) {
     }
   }
 
-  // msg1 -> { reply: msg2 bytes, level } or null when no token authenticates it.
-  // The level is learned by trial decryption, so no token id is on the wire.
-  function handshake(message) {
+  // msg1 -> { hs, level } for the first token that authenticates it, else
+  // null. The level is learned by trial decryption, so no token id is on the
+  // wire. The msg1 payload (client hello) is informational only.
+  function accept(message) {
     if (!(message instanceof Uint8Array) || message.length > HANDSHAKE_LIMIT_BYTES) {
       return null;
     }
@@ -79,10 +80,20 @@ function createE2e({ keys, serverVersion = "", now = () => Date.now() }) {
       }
       const hs = new noise.Handshake({ initiator: false, psk: noise.derivePsk(token), prologue: shared.PROLOGUE });
       try {
-        hs.readMessage(message); // the payload (client hello) is informational only
+        hs.readMessage(message);
+        return { hs, level };
       } catch {
-        continue;
+        // not this token; try the next
       }
+    }
+    return null;
+  }
+
+  // HTTP: msg1 -> { reply: msg2 bytes, level } and a stored session, or null.
+  function handshake(message) {
+    const accepted = accept(message);
+    if (accepted) {
+      const { hs, level } = accepted;
       const at = now();
       evictForNewSession(at);
       const id = crypto.randomBytes(shared.SESSION_BYTES);
@@ -105,6 +116,19 @@ function createE2e({ keys, serverVersion = "", now = () => Date.now() }) {
       return { reply, level };
     }
     return null;
+  }
+
+  // WebSocket: msg1 -> { reply, level, send, receive } or null. The channel
+  // holds its own keys (implicit nonces; a WebSocket is ordered), so nothing is
+  // stored here and nothing is shared with HTTP sessions.
+  function channel(message) {
+    const accepted = accept(message);
+    if (!accepted) {
+      return null;
+    }
+    const { hs, level } = accepted;
+    const reply = hs.writeMessage(shared.encodeJson({ level, serverVersion }));
+    return { reply, level, ...hs.split() };
   }
 
   // envelope bytes -> { session, seq, header, request } or null. null always
@@ -142,7 +166,7 @@ function createE2e({ keys, serverVersion = "", now = () => Date.now() }) {
     return opened.session.send.sendWithNonce(opened.seq, shared.concat(opened.header, shared.RES), shared.encodeJson(response));
   }
 
-  return { handshake, open, seal, sessionCount: () => sessions.size };
+  return { handshake, channel, open, seal, sessionCount: () => sessions.size };
 }
 
 module.exports = { createE2e, ReplayWindow, HANDSHAKE_LIMIT_BYTES, REPLAY_WINDOW, MAX_SESSIONS };

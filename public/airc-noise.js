@@ -414,6 +414,76 @@
     }
   }
 
+  // The encrypted WebSocket: /api/e2e/ws, first message Noise msg1, then every
+  // message a binary frame under the channel's own keys (implicit nonces; a
+  // WebSocket is ordered). JSON in, JSON out, like the plaintext socket.
+  // options: { noise, token, client, version?, url (ws:// or wss://),
+  //            WebSocket?: globalThis.WebSocket }
+  // Set onopen(hello), onmessage(json), onclose() before calling connect().
+  class Channel {
+    constructor({ noise, token, client, version = "", url, WebSocket: WebSocketImpl }) {
+      this.noise = noise;
+      this.psk = noise.derivePsk(token);
+      this.hello = { client, version };
+      this.url = url;
+      this.WebSocket = WebSocketImpl || globalThis.WebSocket;
+      this.cipher = null;
+      this.level = "";
+      this.onopen = () => {};
+      this.onmessage = () => {};
+      this.onclose = () => {};
+    }
+
+    connect() {
+      const hs = new this.noise.Handshake({ initiator: true, psk: this.psk, prologue: PROLOGUE });
+      const ws = new this.WebSocket(this.url);
+      ws.binaryType = "arraybuffer";
+      this.ws = ws;
+      ws.onopen = () => ws.send(hs.writeMessage(encodeJson(this.hello)));
+      ws.onmessage = (event) => {
+        if (typeof event.data === "string") {
+          return; // never meaningful on this socket
+        }
+        const bytes = new Uint8Array(event.data);
+        let payload;
+        try {
+          if (!this.cipher) {
+            const reply = decodeJson(hs.readMessage(bytes));
+            this.cipher = hs.split();
+            this.level = reply.level;
+            this.onopen(reply);
+            return;
+          }
+          payload = decodeJson(this.cipher.receive.receive(EMPTY, bytes));
+        } catch {
+          // A forged or out-of-order message: the counters can't recover.
+          ws.close();
+          return;
+        }
+        this.onmessage(payload);
+      };
+      ws.onclose = () => {
+        this.cipher = null;
+        this.onclose();
+      };
+      ws.onerror = () => {};
+    }
+
+    send(payload) {
+      if (!this.cipher || this.ws.readyState !== 1) {
+        return false;
+      }
+      this.ws.send(this.cipher.send.send(EMPTY, encodeJson(payload)));
+      return true;
+    }
+
+    close() {
+      if (this.ws) {
+        this.ws.close();
+      }
+    }
+  }
+
   return {
     PROTOCOL_NAME,
     E2E_VERSION,
@@ -432,5 +502,6 @@
     encodeJson,
     decodeJson,
     Client,
+    Channel,
   };
 });

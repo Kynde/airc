@@ -29,10 +29,16 @@ Important behavior:
 - `tools/airc local` prepends `--host 0.0.0.0 --no-tunnels`.
 - Pairing payloads in local mode should prefer LAN URLs over `127.0.0.1`.
 - Auth uses `viewToken` and `controlToken`; permissions come from the token.
+  No token is accepted in plaintext: clients run a Noise NNpsk0 handshake keyed
+  by the token and talk through `/api/e2e` and `/api/e2e/ws`
+  (`docs/e2e-encryption.md`). The local `.airc.sock` Unix socket counts as
+  control with no token; it is how `tools/airc` reaches the server.
 - Browser UI reads `canControl` from `/api/config`; the backend still enforces
-  `/api/tmux/input` with the control token.
+  `/api/tmux/input` against the session's level.
+- `tools/airc rotate-tokens [view|control]` replaces tokens and restarts.
 - `tools/airc pair-app` prints Android JSON with the control token.
-- `tools/airc pair-web` prints a browser URL with the view token.
+- `tools/airc pair-web` prints a browser URL with the view token (in the `#k=`
+  fragment).
 - `tools/airc pair-web-control` prints a browser URL with the control token.
 - The Android app stores LAN and public URLs, tries LAN first, and falls back to
   the public/tunnel URL.

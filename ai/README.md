@@ -32,7 +32,8 @@ I even start" pointers. Nothing a quick read of the code already states.
 airc mirrors and controls a **laptop tmux session** from an Android app or a
 browser. A dependency-light Node server (`src/`, only runtime dep is
 `qrcode-terminal`) captures panes via the `tmux` CLI and serves frames as
-ANSI→HTML over HTTP + WebSocket; `tools/airc` is the operational wrapper that
+ANSI→HTML over HTTP + WebSocket, wrapped end-to-end in a Noise channel keyed
+by the token; `tools/airc` is the operational wrapper that
 runs the server detached. The control token grants `tmux send-keys` into a live
 shell, so it is effectively a remote-shell credential — treat it accordingly.
 The Android client is native Kotlin in `android-app/` that renders frames in a

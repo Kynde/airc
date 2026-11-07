@@ -47,7 +47,15 @@ cp config.example.json config.json
 ```
 
 Leave `viewToken`/`controlToken` empty and Airc fills them in; set them yourself
-only if you want specific values (they must be ≥ 32 chars or Airc warns).
+only if you want specific values. A token shorter than 22 characters (128 bits)
+stops the server from starting: a recorded handshake lets anyone test guesses
+offline, so a short token can't be made safe by rate limiting.
+
+**Upgrading from 1.x:** the first start of 2.0 regenerates both tokens once and
+logs a warning saying so. The old ones crossed tunnels in plaintext, so they
+are void. Install the 2.0 app, then re-pair the app and every browser
+(`tools/airc pair-app`, `pair-web`, `pair-web-control`). Old `?k=` bookmarks stop
+working; new links end in `#k=<token>`.
 
 Then start it on your LAN and pair a browser:
 
@@ -245,16 +253,18 @@ them automatically. More detail in
 
 ## App over HTTPS
 
-The Android app talks to the server over **HTTPS/WSS**, even on the LAN, so the
-control token and your keystrokes are encrypted on the local network. This is
-automatic and needs no setup:
+Every client's traffic is already end-to-end encrypted under its token
+([design](docs/e2e-encryption.md)), and no token ever goes on the wire. On top
+of that, the Android app talks to the server over **HTTPS/WSS** on the LAN, with
+the server's certificate pinned. This is automatic and needs no setup:
 
 - On first run the server generates a long-lived self-signed certificate
   (`.airc-tls-key.pem` / `.airc-tls-cert.pem` at the repo root, both `0600`, both
   git-ignored) and serves HTTPS on `tls.port` (default `8443`) alongside the
   plain HTTP port.
-- Browsers keep using plain HTTP — they can't accept a self-signed cert, and
-  that zero-install browser viewer is the point. Only the app uses HTTPS.
+- Browsers keep using plain HTTP on the LAN — they can't accept a self-signed
+  cert, and that zero-install browser viewer is the point. Their requests are
+  still end-to-end encrypted inside it.
 - The certificate's fingerprint travels inside the pairing QR. The app **pins**
   it (trust-on-first-use, anchored by the QR you scan in person), so it trusts
   only your server — not any CA. The ngrok tunnel keeps its normal public
@@ -278,7 +288,9 @@ but not directly on the LAN.
 
 ## Installing the Android app
 
-The app is **optional** — the browser viewer needs none of this.
+The app is **optional** — the browser viewer needs none of this. It requires
+**Android 13 (API 33) or newer**, for the built-in X25519 support its encryption
+uses.
 
 ### Sideload the prebuilt APK (easiest)
 

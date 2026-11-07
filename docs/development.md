@@ -5,13 +5,18 @@
 - `src/server.js`: HTTP routes, lifecycle, health, pairing
 - `src/tmux.js`: tmux capture, pane listing, resize, input forwarding
 - `src/ansi.js`: ANSI SGR to HTML conversion
-- `src/auth.js`: token extraction and `authLevel`
+- `src/e2e.js`: encrypted envelope (`/api/e2e/hs`, `/api/e2e`, `/api/e2e/ws`),
+  sessions, the token's access level
+- `src/noise-node.js`: Noise primitives on `node:crypto`
 - `src/config.js`: config defaults, CLI args, pairing payloads
 - `src/ngrok.js`: supervised ngrok child process
 - `src/dais.js`: ndjson client for the dais voice daemon (mic button; optional)
-- `public/`: browser viewer, probe page, terminal assets
+- `public/`: browser viewer, probe page, terminal assets; `airc-noise.js` is
+  the shared Noise/envelope client, `airc-crypto.js` the vendored @noble
+  bundle (rebuilt by `scripts/vendor/build-airc-crypto.sh`)
 - `tools/airc`: background server wrapper
-- `android-app/`: native Kotlin Android client
+- `android-app/`: native Kotlin Android client (`Noise.kt`, `E2e.kt` for the
+  encrypted channel)
 
 The browser viewer is the canonical terminal UI. The Android app renders
 terminal frames in a WebView and keeps controls native, while sharing the same
@@ -20,8 +25,9 @@ server frame/input APIs.
 Runtime paths:
 
 ```text
-Android app -> LAN URL or tunnel URL -> Node server -> tmux
-Browser/Tesla -> tunnel URL -> Node server -> tmux
+Android app -> e2e over LAN URL or tunnel URL -> Node server -> tmux
+Browser/Tesla -> e2e over tunnel URL -> Node server -> tmux
+tools/airc -> .airc.sock (local Unix socket) -> Node server
 ```
 
 Tunnels are configured under `tunnels` in `config.json` — `ngrok`, `tailscale`

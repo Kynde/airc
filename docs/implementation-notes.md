@@ -45,22 +45,25 @@ the active pane.
 
 ## Auth Boundary
 
-Static JS/CSS/font assets are public so the page can load reliably even if
-cookies are missing. HTML, data, pairing, and input routes require a token.
-Unauthorized protected routes intentionally return plain `404`.
+The page shell (`/`, `index.html`), its JS/CSS/fonts and `/probe` are public:
+they carry no data. Every data, pairing and input route needs an auth level,
+and unauthorized requests intentionally get a plain `404`.
 
-`authLevel(request, url, config)` resolves the presented token to:
+The level is one of `none`, `view`, `control`, and comes from exactly one of:
 
-- `none`
-- `view`
-- `control`
+- an e2e session: the token that completed the Noise handshake on
+  `POST /api/e2e/hs` (or `/api/e2e/ws`), found by trial decryption in
+  `src/e2e.js`. Requests arrive sealed on `POST /api/e2e` and are routed with
+  their session's level ([e2e-encryption.md](e2e-encryption.md));
+- the local Unix socket `.airc.sock` (mode `0600`): `control`;
+- anything else: `none`. No token is accepted in plaintext, in any form.
 
 `viewToken` can view frames/config/panes/health. `controlToken` can also send
 input and fetch app pairing data. The browser only shows input controls when
 `/api/config` returns `canControl: true`, but the server enforces the boundary.
 
-The bookmark query token bootstraps localStorage and an HttpOnly cookie. During
-migration the server accepts both Airc and Swyd header/cookie names.
+The bookmark's `#k=` fragment bootstraps localStorage; the fragment is never
+sent to the server.
 
 ## ANSI Rendering
 

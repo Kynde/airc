@@ -5,8 +5,9 @@ Code wins on conflict — if a pointer is stale, fix or remove it.
 
 ## Server (src/)
 
-add an HTTP route :: src/server.js makeServer request handler # giant if-ladder on url.pathname; auth is resolved once near the top, then `authorized`/`canControl` gate each branch
-add/raise auth :: src/auth.js authLevel + presentedToken # token sources and level mapping live ONLY here; don't reinvent token parsing in server.js
+add an HTTP route :: src/server.js route() # post-auth if-ladder on url.pathname, shared by e2e-decrypted requests and the local socket; `authorized`/`canControl` gate each branch. Public routes (page shell, static, /probe) sit before it in handleRequest
+auth / e2e sessions :: src/e2e.js createE2e (handshake, channel, open, seal) + src/server.js handleE2e/dispatchE2e # level comes ONLY from the session (trial decryption picks the token) or the local Unix socket; no plaintext token parsing exists anywhere
+Noise protocol core :: public/airc-noise.js (shared state machine + envelope + Client/Channel) + src/noise-node.js (node:crypto) + public/airc-crypto.js (vendored @noble, rebuild with scripts/vendor/build-airc-crypto.sh) # vectors: test/fixtures/noise-*.json
 change a tmux command :: src/tmux.js # every tmux invocation is execFile("tmux", [...]) with array args (no shell); add new ones the same way
 ANSI/color rendering :: src/ansi.js ansiToHtml # SGR → spans; everything else stripped. Hand-rolled escaper — the XSS boundary for pane content
 config defaults / CLI flags / token gen :: src/config.js DEFAULTS + parseArgs + loadConfig # tokens are generated and PERSISTED back to config.json on first load
@@ -20,17 +21,18 @@ agent hook intake :: src/server.js handleAgentEvent (`POST /api/agent/event`) # 
 voice dictation route :: src/server.js handleDaisDictate (`POST /api/dais/dictate`) + `GET /api/dais/status` # both control-gated AND gated on config.dais.enabled (404 otherwise); pane goes through the same resolveInputTarget as a keystroke
 dais client / status read :: src/dais.js dictate + status # one ndjson line over the Unix socket, 2s timeout, resolves-never-rejects; status reads the marker + state.json, never the socket. $DAIS_SOCKET is deliberately ignored
 security headers :: src/server.js request handler top (response.setHeader CSP/...) # CSP relaxed only for `/probe` (inline script); HSTS only when x-forwarded-proto=https
-rate limit / WS cap :: src/server.js recordFailedAuth/rateLimited + wsCounts # per-IP, keyed on clientAddress() which trusts X-Forwarded-For
+rate limit / WS cap :: src/server.js recordFailedAuth/rateLimited + wsCounts # keyed on peerAddress() (the socket peer, never X-Forwarded-For); a block never refuses a valid handshake
 
 ## CLI wrapper (tools/)
 
-start/stop/status/restart :: tools/airc cmdOn/cmdOff/cmdStatus # detached node process; pid/state/log files at repo root, all 0600 and gitignored
+start/stop/status/restart :: tools/airc cmdOn/cmdOff/cmdStatus # detached node process; pid/state/log files at repo root, all 0600 and gitignored; talks to the server over the Unix socket .airc.sock (localJson), never with a token
+token rotation :: tools/airc cmdRotateTokens + src/config.js rotateTokens # rewrite config.json, then restart a running server with its saved args
 pairing commands :: tools/airc cmdPair/cmdPairWeb # pair-app=control token JSON, pair-web=view token URL, pair-web-control=control token URL
 entrypoint (foreground) :: tools/airc-tmux # one-liner that execs `node src/server.js "$@"`; tools/airc is the backgrounding wrapper
 
 ## Browser viewer (public/)
 
-frame rendering / polling / WS :: public/app.js # WebSocket preferred, HTTP poll fallback; token bootstrapped from `?k=` into localStorage then stripped from the URL bar
+frame rendering / polling / WS :: public/app.js api() + startWebSocket # encrypted WebSocket preferred, encrypted HTTP poll fallback; token bootstrapped from the `#k=` fragment into localStorage then stripped from the URL bar
 browser view-state handshake :: public/app.js sendViewState + src/server.js wsState.viewReady # client must send `{type:"view"}` after WS open; server defers first frame until then to preserve pins
 auto-follow target / what disables auto :: public/app.js autoTarget+applyAuto+AUTO_RANK # sticky-by-urgency (waiting>busy>idle, NOT the server's chip order); selectChip keeps auto, picker + first keystroke drop it. Mirror of MainActivity.kt applyAuto/autoRank
 mic button state machine :: public/app.js daisEnabled/daisRecording/renderDais/sendDais/daisTick + public/index.html #control-mic,#control-mic-discard # hidden when not configured, DISABLED (reason in title) when the daemon is down; poll only while the control bar is open; a tap drops auto mode
@@ -41,7 +43,8 @@ terminal color CSS :: public/app.css # fg-N/bg-N palette classes that ansi.js em
 
 ## Android (android-app/)
 
-everything :: android-app/app/src/main/java/dev/airc/tmuxremote/MainActivity.kt # single big activity: WebView render, endpoint fallback, font controls, prefs
+everything :: android-app/app/src/main/java/dev/airc/tmuxremote/MainActivity.kt # single big activity: WebView render, endpoint fallback, font controls, prefs; all network calls go through api() / E2eChannel
+app e2e :: .../Noise.kt (Noise core, platform JCA, minSdk 33) + .../E2e.kt (E2eClient for HTTP, E2eChannel for the OkHttp WebSocket) # JVM tests in app/src/test: NoiseTest (vectors), E2eLiveTest (opt-in, against a running server)
 endpoint fallback / LAN rediscovery :: .../MainActivity.kt endpointUrls + maybeRefreshLanUrls + maybePreferLan # lastGoodUrl first; refresh /api/config over tunnel; drop WS to let poll loop try LAN again
 auto-follow / attention chips :: .../MainActivity.kt applyAuto+autoRank+selectChip+input TextWatcher # mirror of public/app.js; sticky-by-urgency, chip-tap keeps auto, picker + first keystroke drop it
 QR pairing :: .../QrScanActivity.kt # camera scan → pairing payload
@@ -50,6 +53,7 @@ app id / version :: android-app/app/build.gradle.kts # applicationId dev.airc.tm
 ## Build / test
 
 syntax check :: npm run check (= node scripts/check.js) # `node --check` over src/ + public/ ONLY — does NOT run the unit tests
-unit tests :: node --test 'test/*.test.js' # detect.js fixtures + test/dais.test.js (fake ndjson daemon on a temp Unix socket) + test/tunnels.test.js (config precedence/migration); not wired into `npm run check` or any npm script
+unit tests :: node --test 'test/*.test.js' # detect, dais, tunnels, config (tokens), server (raw-socket edge cases), noise (vectors, both backends), e2e (real server); not wired into `npm run check` or any npm script
+android unit tests :: cd android-app && ./gradlew testDebugUnitTest # Noise vectors on the desktop JDK's JCA
 android build/install :: make build / make push / make deploy # APK modeled as a file target; rebuilds only when sources changed
 release :: /release <patch|minor|major> or .claude/skills/release # tag is source of truth, v-prefixed; bumps package.json, gh release, fetch tag back

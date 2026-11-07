@@ -26,6 +26,11 @@ It's a small Node server on your laptop that captures tmux panes, serves a live
 browser viewer, and accepts input only from clients holding a token. It's not
 tied to any one AI tool - if it runs in tmux, you can watch and drive it.
 
+Everything between a client and the server is **end-to-end encrypted** under
+that token, so a tunnel in between (ngrok, Funnel, Cloudflare) carries only
+ciphertext: it never sees the token, your keystrokes, or the terminal. See
+[how far that protection goes](docs/e2e-encryption.md#what-it-protects-per-client).
+
 **The browser is all you need.** A phone, tablet, or even a car browser opens
 the viewer over your LAN with zero accounts and zero install. The
 [Android app](#android-app-optional) and [public tunnel](#going-remote) are
@@ -105,6 +110,11 @@ Funnel](INSTALLATION.md#public-access-with-an-external-tunnel), Cloudflare Tunne
 a reverse proxy — and Airc advertises that address in bookmarks and the pairing
 QR. Airc doesn't start or supervise those; it only needs the URL.
 
+A tunnel only forwards ciphertext. One caveat for the browser: it gets the
+viewer's code from the server, through the tunnel, so a tunnel that rewrites
+pages could serve a viewer that leaks the token. The Android app ships its own
+code and isn't exposed to that.
+
 Airc can also run ngrok itself (`tunnels.ngrok`), which needs a (free) account
 and a one-time setup. Several tunnels can be enabled at once — they all keep
 working, and `tunnels.prefer` picks which one gets advertised. The full
@@ -126,7 +136,7 @@ through a native client, and it adds two things the browser can't easily match:
 - **Automatic failover** — one pairing payload carries both your LAN and public
   URLs, so the app uses the direct connection at home and the tunnel away.
 
-Grab the signed APK from the [latest release](https://github.com/Kynde/airc/releases/latest)
+It needs **Android 13 or newer**. Grab the signed APK from the [latest release](https://github.com/Kynde/airc/releases/latest)
 (`airc-<version>.apk`) and sideload it, or build it yourself with the Android
 SDK. See **[INSTALLATION.md](INSTALLATION.md#installing-the-android-app)**.
 
@@ -149,6 +159,11 @@ tools/airc pair-app           # Android pairing payload (control token)
 
 The browser only shows the input controls when you open it with a control token.
 
+Browser links carry the token after `#k=`, a part of the URL that browsers never
+send, and the viewer moves it into local storage on first load. To revoke links
+you've handed out, `tools/airc rotate-tokens` (or `rotate-tokens view`) and
+re-pair.
+
 ## Common Commands
 
 ```sh
@@ -160,6 +175,7 @@ tools/airc pair-web-control   # control browser QR/URL
 tools/airc pair-app           # Android pairing QR/JSON
 tools/airc off                # stop the server
 tools/airc logs               # path to the server log
+tools/airc rotate-tokens      # new tokens (restarts a running server; re-pair after)
 ```
 
 ## More Docs

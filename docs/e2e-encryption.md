@@ -203,10 +203,9 @@ no tunnel can reach it. Hooks switch to `curl --unix-socket`.
 
 ## Rollout: one cut-over
 
-No config switch and no transition mode: the HTTP listener stops accepting
+No config switch and no transition mode: the HTTP listener stopped accepting
 plaintext tokens altogether, in every form (`?k=`, cookie, `Authorization`,
-`X-Airc-Auth`). Work proceeds in this order, on a branch, and merges when all
-three clients work:
+`X-Airc-Auth`). It shipped in 2.0.0, built in this order:
 
 1. **Shared core and server.** The Noise core is one JS module used by both the
    server and the browser, checked against the published test vectors. The
@@ -223,16 +222,16 @@ three clients work:
 
 - **Vectors:** the published Noise vectors for `NNpsk0_25519_ChaChaPoly_SHA256`,
   checked in Node and in Android JVM tests.
-- **Interop:** a Node client against the real server, and the Android core
-  against a captured server transcript.
-- **Recording proxy:** run real clients through a local HTTP proxy that saves
-  every byte, then assert that neither token nor any terminal text appears in
-  the capture.
-- **Negative tests:** a flipped bit in any field, a replayed `seq`, swapped
-  responses, a wrong token, a view session calling a control endpoint, an
-  expired session, and a weak token with E2E on.
-- **In the car:** the Tesla over the tunnel, where frame latency must stay
-  acceptable.
+- **Interop:** the shared JS client against the real server
+  (`test/e2e.test.js`), and the Kotlin client against a running server
+  (`E2eLiveTest`, opt-in: set `AIRC_E2E_URL` and `AIRC_E2E_TOKEN`).
+- **Recording fetch:** `test/e2e.test.js` records every byte the client sends
+  and receives and asserts that neither the token nor any plaintext appears.
+- **Negative tests:** a flipped bit, a replayed or rewritten `seq`, swapped
+  responses, a wrong token, a view session calling a control endpoint, plaintext
+  tokens on every route, and a weak token at startup.
+- **In the car:** not yet tested. The Tesla over the tunnel, where frame
+  latency must stay acceptable.
 
 ## Decisions
 

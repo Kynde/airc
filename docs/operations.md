@@ -57,6 +57,7 @@ Common commands:
 tools/airc status
 tools/airc off
 tools/airc logs
+tools/airc rotate-tokens   # [view|control]; restarts a running server, re-pair after
 ```
 
 Runtime state is written to ignored files:
@@ -156,7 +157,15 @@ the viewed pane — you still tap `Enter` yourself. It greys out when the dais
 daemon isn't running. See [dais.md](dais.md), including what enabling it does to
 the control token's reach.
 
-`/probe` is available after auth for browser diagnostics.
+`/probe` is a public diagnostics page (it shows only the server time and your
+own address), so it works in the car with nothing but the URL.
+
+Browser links put the token after `#k=`, which browsers never send; the viewer
+moves it into local storage and clears it from the address bar. Every request
+and the frame stream are end-to-end encrypted under it. The one thing the
+browser can't defend against is a tunnel that rewrites the viewer's own code
+on the way in (the app ships its code and is immune); see
+[e2e-encryption.md](e2e-encryption.md#what-it-protects-per-client).
 
 The browser top row shows public tunnel liveness and laptop battery status when
 available. Frame updates use WebSockets when supported and fall back to polling.

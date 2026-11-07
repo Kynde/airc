@@ -15,8 +15,9 @@ addresses, especially `10.0.0.0/8`.
 Working public-tunnel options:
 
 - Cloudflare TryCloudflare worked.
-- ngrok worked and is preferred for now because the assigned free dev domain is
-  reusable as a stable Tesla bookmark.
+- ngrok worked at first, but its free-tier interstitial page now renders blank
+  in the car, so it's unusable there (see the README's "Going Remote"). Use an
+  external tunnel such as Tailscale Funnel.
 
 ## Browser Capabilities
 

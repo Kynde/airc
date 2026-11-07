@@ -43,6 +43,7 @@ _airc() {
     'pair-web:print browser QR/URL/token with view token'
     'pair-web-control:print browser QR/URL/token with control token'
     'logs:print the background server log path'
+    'rotate-tokens:replace tokens and restart a running server'
   )
 
   _arguments -C \
@@ -55,6 +56,7 @@ _airc() {
       case ${line[1]} in
         on|local|restart) _airc_server_args ;;
         status) _arguments '--json[machine-readable output]' ;;
+        rotate-tokens) _values 'which token (default: both)' 'view[only the view token]' 'control[only the control token]' ;;
       esac
       ;;
   esac

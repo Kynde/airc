@@ -269,7 +269,9 @@ was paired with, so **re-scan the QR** (`tools/airc pair-app`) if you:
 
 - reinstall the server or delete the `.airc-tls-*.pem` files (a new cert is
   generated, so the old pin no longer matches), or
-- upgrade from an older app/server that paired before HTTPS existed.
+- upgrade from an older app/server that paired before HTTPS existed, or
+- move to a new phone or restore one from backup. The pairing holds the control
+  token, so the app keeps it out of Android backup and device-to-device transfer.
 
 Until you re-pair, the app reaches the server over the ngrok tunnel (if enabled)
 but not directly on the LAN.

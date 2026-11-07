@@ -148,3 +148,24 @@ test("a websocket decompression bomb closes the socket instead of inflating", as
   socket.write(compressedFrame("A".repeat(4 * 1024 * 1024))); // ~4 KiB on the wire
   assert.strictEqual(await closesWithin(socket, 2000), true);
 });
+
+test("forged X-Forwarded-For can't dodge the failed-auth block, and a valid token still works", async () => {
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => { lines.push(args.join(" ")); };
+  try {
+    for (let index = 0; index < 10; index += 1) {
+      await rawRequest(
+        `GET /api/status HTTP/1.1\r\nHost: localhost\r\nX-Airc-Auth: wrong${index}\r\n` +
+        `X-Forwarded-For: 203.0.113.${index}\r\nConnection: close\r\n\r\n`,
+      );
+    }
+    const blocked = await rawRequest(
+      `GET /api/status HTTP/1.1\r\nHost: localhost\r\nX-Airc-Auth: ${"v".repeat(32)}\r\nConnection: close\r\n\r\n`,
+    );
+    assert.ok(lines.some((line) => /rate-limit: blocking 127\.0\.0\.1 /.test(line)), lines.join("\n"));
+    assert.strictEqual(statusOf(blocked), 200); // a block only ever drops wrong tokens
+  } finally {
+    console.log = original;
+  }
+});

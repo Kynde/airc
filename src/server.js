@@ -41,6 +41,7 @@ const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const AUTH_FAIL_LIMIT = 10; // wrong-token tries per window before a temporary block
 const AUTH_FAIL_WINDOW_MS = 60 * 1000;
 const AUTH_BLOCK_MS = 5 * 60 * 1000;
+const AUTH_FAIL_MAX_ENTRIES = 1024; // distinct addresses tracked at once
 const WS_PER_IP_LIMIT = 8; // concurrent websockets per client address
 
 // Mask token values before anything reaches the (persistent, possibly
@@ -132,6 +133,17 @@ function parseRequestUrl(request) {
   }
 }
 
+// The address the TCP connection actually came from. The failed-auth throttle
+// and websocket cap key on this, never on X-Forwarded-For, which any client can
+// set and which not every tunnel overwrites. Behind a tunnel this makes all its
+// traffic one bucket, which is safe: a block only ever drops WRONG tokens, and
+// the websocket cap counts only authenticated sockets.
+function peerAddress(request) {
+  return request.socket.remoteAddress || "unknown";
+}
+
+// For display only (logs, the viewers list): the forwarded client address when
+// a proxy supplied one. Unverified, so it must not drive any limit.
 function clientAddress(request) {
   const forwarded = request.headers["x-forwarded-for"];
   if (forwarded) {
@@ -574,11 +586,10 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       .sort((a, b) => (rank[a.state] - rank[b.state]) || (a.since - b.since));
   }
 
-  // Per-IP brute-force throttle for wrong-token requests, plus a cap on
-  // concurrent websockets. Note: clientAddress() ultimately trusts
-  // X-Forwarded-For from the fronting proxy (ngrok), so this raises the bar
-  // against naive guessing rather than being a hard ceiling against a client
-  // that forges the header.
+  // Per-address brute-force throttle for wrong-token requests, plus a cap on
+  // concurrent websockets, both keyed on peerAddress(). authFailures is bounded:
+  // expired entries are swept once it grows, and past AUTH_FAIL_MAX_ENTRIES the
+  // oldest go first, so a stream of distinct addresses can't grow it forever.
   const authFailures = new Map(); // ip -> { count, first, blockedUntil }
   const wsCounts = new Map(); // ip -> active socket count
 
@@ -594,6 +605,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       entry = { count: 0, first: now, blockedUntil: 0 };
     }
     entry.count += 1;
+    if (!authFailures.has(ip) && authFailures.size >= AUTH_FAIL_MAX_ENTRIES) {
+      pruneAuthFailures(now);
+    }
     if (entry.count >= AUTH_FAIL_LIMIT) {
       entry.blockedUntil = now + AUTH_BLOCK_MS;
       log(`rate-limit: blocking ${ip} for ${AUTH_BLOCK_MS / 1000}s after ${entry.count} failed auth attempts`);
@@ -603,6 +617,21 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
 
   function clearFailedAuth(ip) {
     authFailures.delete(ip);
+  }
+
+  function pruneAuthFailures(now) {
+    for (const [ip, entry] of authFailures) {
+      if (now - entry.first > AUTH_FAIL_WINDOW_MS && now >= entry.blockedUntil) {
+        authFailures.delete(ip);
+      }
+    }
+    // Still full: drop the oldest (Map iterates in insertion order).
+    for (const ip of authFailures.keys()) {
+      if (authFailures.size < AUTH_FAIL_MAX_ENTRIES) {
+        break;
+      }
+      authFailures.delete(ip);
+    }
   }
 
   async function captureFrame({ requestedPane = "", requestedSession = "", cols = NaN, rows = NaN, viewerAddress = "" }) {
@@ -1018,7 +1047,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     const auth = authLevel(request, url, config);
     const authorized = auth.level !== "none";
     const canControl = auth.level === "control";
-    const ip = clientAddress(request);
+    const ip = peerAddress(request);
 
     // A wrong token from a throttled address is dropped before any work.
     if (!authorized && auth.presented && rateLimited(ip)) {
@@ -1196,7 +1225,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       rejectUpgrade(socket);
       return;
     }
-    const ip = clientAddress(request);
+    const ip = peerAddress(request);
     const auth = authLevel(request, url, config);
     if (auth.level === "none") {
       if (auth.presented && !rateLimited(ip)) {

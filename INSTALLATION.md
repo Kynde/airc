@@ -123,11 +123,12 @@ Funnel must be enabled once for your tailnet; `tailscale funnel` prints an admin
 URL if it isn't. Funnel only exposes ports 443, 8443 and 10000, so the public URL
 carries no port even though it proxies to 8080.
 
-One caveat: Tailscale Funnel does not pass a per-client `X-Forwarded-For`, so
-Airc sees every tunnelled request as coming from the local Tailscale address.
-Its failed-auth throttle and the 8-websockets-per-address cap therefore apply to
-all Funnel traffic as one bucket. Fine for personal use; worth knowing if you
-share the URL.
+One caveat: Airc's failed-auth throttle and its 8-websockets-per-address cap
+key on the address the connection actually comes from, never on
+`X-Forwarded-For` (any client can set that header). Every request through a
+tunnel, Funnel or ngrok, arrives from the local tunnel agent, so all tunnel
+traffic shares one bucket. Fine for personal use: a block only drops wrong
+tokens, never a valid one. Worth knowing if you share the URL.
 
 ## Public access with ngrok
 

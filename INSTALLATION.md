@@ -67,7 +67,7 @@ tools/airc pair-web
 |---|---|---|
 | `host` | `127.0.0.1` | Bind address. `0.0.0.0` exposes it on the LAN (what `local` sets). |
 | `port` | `8080` | HTTP port (browsers). |
-| `sessions` | `["*"]` | tmux session name(s) to follow; supports `*`/`?` globs. The default follows every live session; set it only to narrow the scope. |
+| `sessions` | `["*"]` | tmux session name(s) to follow; supports `*`/`?` globs. The default follows every live session; set it to shorten what Airc lists and follows. Not an access limit: any token can still reach another session's pane by id. |
 | `viewToken` / `controlToken` | auto-generated | View-only vs. can-type tokens. |
 | `theme` | `dark` | Initial browser theme. |
 | `tls.enabled` | `true` | Serve HTTPS for the app alongside HTTP — see [App over HTTPS](#app-over-https). |

@@ -31,7 +31,7 @@ Commands:
 
 Examples:
   tools/airc local
-  tools/airc local --session swyd   # narrow to one session (default: all)
+  tools/airc local --session swyd   # follow one session (default: all; not an access limit)
   tools/airc pair-app
   tools/airc pair-web
 `);

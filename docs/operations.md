@@ -24,8 +24,11 @@ tools/airc on
 tools/airc pair-web
 ```
 
-Narrow the scope with `--session NAME` (repeatable) when you want Airc to see
-only some sessions — for example `tools/airc local --session work --session ops`.
+Narrow what Airc follows with `--session NAME` (repeatable) when you want it to
+list and fall back across only some sessions — for example
+`tools/airc local --session work --session ops`. This is a navigation default,
+not an access limit: any token can still view a pane in another session by
+naming it, and the control token types into a shell anyway.
 
 `tools/airc local` prepends `--host 0.0.0.0 --no-tunnels`, so no tunnel is
 advertised even when one is configured. Use `tools/airc on` when the configured
@@ -88,6 +91,10 @@ only load the terminal viewer. The control token can also send text and quick
 keys. The browser viewer shows input controls only when opened with the control
 token.
 
+Neither token is confined to the configured `sessions`: a token can reach any
+pane on the tmux server by its id. Treat the view token as able to read every
+tmux session you have open, and the control token as a remote shell.
+
 In local mode, QR payloads should use a LAN URL such as `http://10.x.x.x:8080`.
 If the phone saves `127.0.0.1`, re-pair from `tools/airc local ...`; on Android,
 `127.0.0.1` means the phone itself.
@@ -105,7 +112,7 @@ only know LAN URLs because local mode disables every tunnel.
   of characters, `?` a single one), so `foo*` follows every live session whose
   name starts with `foo`. Entries without glob characters stay exact matches.
   The default is `["*"]` — every live session — so `sessions` only needs setting
-  when you want a narrower scope.
+  when you want a shorter list. It is not an access limit (see above).
 - Type in the bottom field, then tap `send` or use the keyboard send action.
 - Quick buttons send Up, Down, and Enter.
 - `A-` and `A+` adjust app-side font rendering only; they do not resize tmux.

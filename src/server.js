@@ -1453,7 +1453,7 @@ function printHelp() {
 Mirror and control tmux sessions from Android.
 
 Options:
-  --session NAME   limit to a tmux session; repeat for multiple, globs allowed
+  --session NAME   follow a tmux session (repeat, globs ok); navigation, not access control
                    (default: every live session)
   --host HOST      address to bind (use 0.0.0.0 for same-WLAN phones)
   --port PORT      port to listen on

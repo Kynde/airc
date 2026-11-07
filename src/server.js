@@ -227,9 +227,15 @@ function deflateMessage(body) {
   return out.subarray(0, out.length - WS_DEFLATE_TAIL.length);
 }
 
+// Clients only ever send tiny `view` state messages, so cap what one compressed
+// message may expand to. Without it a ~1 MiB frame (the wire limit) inflates
+// synchronously to ~1 GB. Exceeding the cap throws, which closes the socket.
+const WS_INFLATE_LIMIT = 64 * 1024;
+
 function inflateMessage(body) {
   return zlib.inflateRawSync(Buffer.concat([body, WS_DEFLATE_TAIL]), {
     finishFlush: zlib.constants.Z_SYNC_FLUSH,
+    maxOutputLength: WS_INFLATE_LIMIT,
   });
 }
 

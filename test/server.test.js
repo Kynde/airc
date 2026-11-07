@@ -85,3 +85,66 @@ test("the server still answers normal requests afterwards", async () => {
   const reply = await rawRequest("GET /api/tmux/frame HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
   assert.strictEqual(statusOf(reply), 404); // no token: the usual not-found
 });
+
+// Open an authenticated websocket that negotiates permessage-deflate, and hand
+// back the raw socket once the 101 arrives.
+function openWebsocket() {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1");
+    socket.once("error", reject);
+    socket.write(
+      `GET /api/tmux/ws?k=${"v".repeat(32)} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n` +
+      "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n" +
+      "Sec-WebSocket-Extensions: permessage-deflate\r\n\r\n",
+    );
+    socket.once("data", (chunk) => {
+      const head = String(chunk);
+      if (!head.startsWith("HTTP/1.1 101") || !/permessage-deflate/i.test(head)) {
+        reject(new Error(`no deflate websocket: ${head.split("\r\n")[0]}`));
+        return;
+      }
+      resolve(socket);
+    });
+  });
+}
+
+// A masked, RSV1-compressed client text frame carrying `text`.
+function compressedFrame(text) {
+  const zlib = require("node:zlib");
+  const raw = zlib.deflateRawSync(Buffer.from(text), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+  const body = raw.subarray(0, raw.length - 4);
+  const mask = Buffer.from([1, 2, 3, 4]);
+  const masked = Buffer.from(body.map((byte, index) => byte ^ mask[index % 4]));
+  let header;
+  if (body.length < 126) {
+    header = Buffer.from([0xc1, 0x80 | body.length]);
+  } else {
+    header = Buffer.alloc(4);
+    header[0] = 0xc1;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(body.length, 2);
+  }
+  return Buffer.concat([header, mask, masked]);
+}
+
+function closesWithin(socket, ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+    socket.once("close", () => { clearTimeout(timer); resolve(true); });
+  });
+}
+
+test("a small compressed websocket message is accepted", async () => {
+  const socket = await openWebsocket();
+  socket.on("data", () => {});
+  socket.write(compressedFrame(JSON.stringify({ type: "noop", pad: "x".repeat(500) })));
+  assert.strictEqual(await closesWithin(socket, 300), false);
+  socket.destroy();
+});
+
+test("a websocket decompression bomb closes the socket instead of inflating", async () => {
+  const socket = await openWebsocket();
+  socket.on("data", () => {});
+  socket.write(compressedFrame("A".repeat(4 * 1024 * 1024))); // ~4 KiB on the wire
+  assert.strictEqual(await closesWithin(socket, 2000), true);
+});

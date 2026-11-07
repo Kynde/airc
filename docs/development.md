@@ -60,6 +60,10 @@ Pairing payload behavior:
 
 ## Server API
 
+Over the network these are reached only through the encrypted envelope
+(`POST /api/e2e`, see [e2e-encryption.md](e2e-encryption.md)); locally, also
+over the owner-only Unix socket `.airc.sock`, which counts as control.
+
 - `GET /api/config`
 - `GET /api/pairing`
 - `GET /api/tmux/frame`
@@ -70,10 +74,16 @@ Pairing payload behavior:
 - `POST /api/dais/dictate` (voice dictation latch; control token; 404 unless `dais.enabled`)
 - `GET /api/dais/status` (mic/daemon state for the button; control token; see [dais.md](dais.md))
 - `GET /api/status`
-- `GET /probe`
-- `GET /api/probe/poll`
 - `GET /healthz`
-- `WebSocket /api/tmux/ws`
+
+Encrypted transport (no token on the wire; a Noise handshake keyed by it):
+
+- `POST /api/e2e/hs` (handshake), `POST /api/e2e` (one sealed request)
+- `WebSocket /api/e2e/ws` (the frame stream)
+
+Public (no auth; they show only the server time and the caller's address):
+
+- `GET /probe`, `GET /api/probe/poll` (the car diagnostics page)
 
 Unauthenticated static assets (the browser's token is in the `#k=` fragment,
 which is never sent; everything after the page shell goes over `/api/e2e`):
@@ -87,16 +97,12 @@ which is never sent; everything after the page shell goes over `/api/e2e`):
 - `/fonts/FiraCode-Regular.ttf`
 
 Auth uses generated tokens in `config.json`. `viewToken` can view only;
-`controlToken` can view and send input. Requests can use:
+`controlToken` can view and send input. No token is ever accepted in plaintext
+(no `?k=`, header, or cookie): a client proves it holds one by completing the
+handshake, and its session gets that token's level. Tokens shorter than 22
+characters (128 bits) are refused at startup.
 
-- `?k=<token>`
-- `X-Airc-Auth: <token>`
-- `X-Swyd-Auth: <token>` during migration
-- `Authorization: Bearer <token>`
-- `airc_auth` cookie
-- `swyd_auth` cookie during migration
-
-`GET /api/config` returns `canControl` based on the token presented. Browser UI
+`GET /api/config` returns `canControl` based on the session's level. Browser UI
 controls are shown only when `canControl` is true. `/api/tmux/input` and
 `/api/pairing` require the control token and return `404` otherwise.
 
@@ -136,8 +142,8 @@ Text uses `tmux send-keys -l`; named keys use `tmux send-keys`.
 See [Implementation Notes](implementation-notes.md) for tmux edge cases and
 sizing details.
 
-The browser prefers `WebSocket /api/tmux/ws` for frame updates and falls back to
-HTTP polling if the socket is unavailable or closes.
+The browser prefers `WebSocket /api/e2e/ws` for frame updates and falls back to
+(encrypted) HTTP polling if the socket is unavailable or closes.
 
 ## Build And Test
 

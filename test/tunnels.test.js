@@ -18,6 +18,7 @@ function withConfig(fileConfig, argv = []) {
     port: 9099,
     viewToken: "v".repeat(32),
     controlToken: "c".repeat(32),
+    tokenEpoch: 2,
     ...fileConfig,
   }));
   return loadConfig(["--config", configPath, "--no-tls", ...argv]).config;

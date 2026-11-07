@@ -1668,7 +1668,10 @@ class MainActivity : ComponentActivity() {
             )
         } else {
             val url = URL(trimmed)
-            val params = url.query.orEmpty().split("&").mapNotNull {
+            // A browser bookmark link: the token is in the #k= fragment (or the
+            // query, in a link from before end-to-end encryption). The fragment
+            // goes last so it wins in toMap().
+            val params = (url.query.orEmpty().split("&") + url.ref.orEmpty().split("&")).mapNotNull {
                 val parts = it.split("=", limit = 2)
                 if (parts.size == 2) parts[0] to java.net.URLDecoder.decode(parts[1], "UTF-8") else null
             }.toMap()

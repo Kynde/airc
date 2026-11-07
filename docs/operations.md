@@ -85,6 +85,10 @@ Re-pair after changing:
 - server URL
 - server port
 - `viewToken` or `controlToken`
+- the upgrade to end-to-end encryption: the first start regenerates both tokens
+  (the old ones crossed tunnels in plaintext), logs a warning saying so, and
+  every client needs the new app build and a fresh pairing. Browser links now
+  end in `#k=<token>`; old `?k=` bookmarks no longer work.
 
 Airc stores separate `viewToken` and `controlToken` values. The view token can
 only load the terminal viewer. The control token can also send text and quick

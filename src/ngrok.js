@@ -69,9 +69,9 @@ function startNgrok(options, log, onUrl) {
     if (state.stopping) {
       return;
     }
-    // --inspect=false: by default the agent records every request, headers
-    // (X-Airc-Auth) and bodies included, in its inspector on 127.0.0.1:4040,
-    // where any local user can read it.
+    // --inspect=false: by default the agent records every request in its
+    // inspector on 127.0.0.1:4040, where any local user can read it. The
+    // bodies are ciphertext now, but there's no reason to keep a log.
     const args = [
       "http", String(options.port), "--url", `https://${options.domain}`, "--inspect=false",
       "--log", "stdout", "--log-format", "json",

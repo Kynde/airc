@@ -8,10 +8,8 @@ const http = require("node:http");
 const https = require("node:https");
 const path = require("node:path");
 const { Readable } = require("node:stream");
-const zlib = require("node:zlib");
 
 const { ansiToHtml } = require("./ansi");
-const { authLevel, authCookie, tokenEquals } = require("./auth");
 const { loadConfig, bookmarkUrl, pairingPayload, localLanAddresses, advertisedUrl, tunnelUrl } = require("./config");
 const dais = require("./dais");
 const { createE2e, HANDSHAKE_LIMIT_BYTES } = require("./e2e");
@@ -53,12 +51,12 @@ const E2E_ENVELOPE_LIMIT = 8 * INPUT_LIMIT_BYTES;
 const E2E_WS_HANDSHAKE_MS = 10 * 1000; // an encrypted socket must handshake within this
 
 // Mask token values before anything reaches the (persistent, possibly
-// world-readable) log: the `?k=<token>` query param and the `"token":"<token>"`
-// field in a pairing payload. The control token grants shell input, so it must
+// world-readable) log: the `#k=<token>` of a bookmark link (and a legacy
+// `?k=`), and the `"token":"<token>"` field in a pairing payload. The control token grants shell input, so it must
 // never be written to disk in cleartext.
 function redactSecrets(message) {
   return String(message)
-    .replace(/([?&]k=)[^&\s"]+/g, "$1<redacted>")
+    .replace(/([?&#]k=)[^&\s"]+/g, "$1<redacted>")
     .replace(/("token"\s*:\s*")[^"]+(")/g, "$1<redacted>$2");
 }
 
@@ -247,56 +245,11 @@ function websocketAccept(key) {
   return crypto.createHash("sha1").update(`${key}${WS_GUID}`).digest("base64");
 }
 
-// RFC 7692 permessage-deflate. We negotiate no_context_takeover on both ends,
-// so every message is (de)compressed against a fresh dictionary and a stateless
-// one-shot codec is correct. `finishFlush: Z_SYNC_FLUSH` produces the sync-flush
-// framing the peer expects; the empty block it implies (00 00 ff ff) is dropped
-// on send and re-appended before inflating. The per-message dictionary costs
-// little here because the server already skips unchanged frames, so consecutive
-// frames on the wire aren't near-duplicates anyway.
-const WS_DEFLATE_TAIL = Buffer.from([0x00, 0x00, 0xff, 0xff]);
-// Below this, DEFLATE's block framing makes the payload bigger than the input
-// (a heartbeat compresses to the same size, "{}" grows). Compress frames, send
-// small control messages as plain text — permessage-deflate allows per-message.
-const WS_DEFLATE_MIN = 200;
-
-function deflateMessage(body) {
-  const out = zlib.deflateRawSync(body, { finishFlush: zlib.constants.Z_SYNC_FLUSH });
-  return out.subarray(0, out.length - WS_DEFLATE_TAIL.length);
-}
-
-// Clients only ever send tiny `view` state messages, so cap what one compressed
-// message may expand to. Without it a ~1 MiB frame (the wire limit) inflates
-// synchronously to ~1 GB. Exceeding the cap throws, which closes the socket.
-const WS_INFLATE_LIMIT = 64 * 1024;
-
-function inflateMessage(body) {
-  return zlib.inflateRawSync(Buffer.concat([body, WS_DEFLATE_TAIL]), {
-    finishFlush: zlib.constants.Z_SYNC_FLUSH,
-    maxOutputLength: WS_INFLATE_LIMIT,
-  });
-}
-
-// Accept the extension only when the client offers it; answer with
-// no_context_takeover on both ends (the most compatible variant, notably with
-// OkHttp on Android). Clients that don't offer it keep getting plain frames.
-function negotiateDeflate(header) {
-  return (
-    typeof header === "string" &&
-    header.split(",").some((offer) => offer.trim().toLowerCase().startsWith("permessage-deflate"))
-  );
-}
-
-function websocketFrame(payload, deflate = false, binary = false) {
-  let body = Buffer.from(payload);
-  let first = binary ? 0x82 : 0x81;
-  if (deflate && body.length >= WS_DEFLATE_MIN) {
-    const compressed = deflateMessage(body);
-    if (compressed.length < body.length) {
-      body = compressed;
-      first |= 0x40; // RSV1: this message is compressed
-    }
-  }
+// Every message on the (encrypted) socket is a binary frame. No
+// permessage-deflate: ciphertext doesn't compress, so it's never negotiated.
+function websocketFrame(payload) {
+  const body = Buffer.from(payload);
+  const first = 0x82; // FIN + binary
   if (body.length < 126) {
     return Buffer.concat([Buffer.from([first, body.length]), body]);
   }
@@ -345,9 +298,8 @@ function readWebsocketMessages(state, chunk) {
     if (state.buffer.length < offset + 4 + length) break;
     const first = state.buffer[0];
     const opcode = first & 0x0f;
-    const compressed = Boolean(first & 0x40); // RSV1
-    if (compressed && !state.deflate) {
-      throw new Error("unexpected compressed frame");
+    if (first & 0x70) {
+      throw new Error("reserved bits set (no extension is negotiated)");
     }
     const mask = state.buffer.subarray(offset, offset + 4);
     offset += 4;
@@ -359,11 +311,10 @@ function readWebsocketMessages(state, chunk) {
     state.buffer = state.buffer.subarray(offset + length);
     if (opcode === 0x8) {
       messages.push({ type: "close" });
-    } else if (opcode === 0x1) {
-      const text = (compressed ? inflateMessage(decoded) : decoded).toString("utf8");
-      messages.push({ type: "text", text });
     } else if (opcode === 0x2) {
-      messages.push({ type: "binary", data: compressed ? inflateMessage(decoded) : decoded });
+      messages.push({ type: "binary", data: decoded });
+    } else if (opcode === 0x1) {
+      messages.push({ type: "text" }); // never valid here; fails a handshake, ignored after
     }
   }
   return messages;
@@ -1091,22 +1042,27 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       return;
     }
 
-    // The local Unix socket is control by construction (see config.localSocket).
-    const auth = request.aircLocal ? { level: "control", token: "", presented: "" } : authLevel(request, url, config);
-    const authorized = auth.level !== "none";
-    const ip = peerAddress(request);
-
-    // A wrong token from a throttled address is dropped before any work.
-    if (!authorized && auth.presented && rateLimited(ip)) {
-      notFound(response);
+    // The car diagnostics page and its poll: public, since they show only the
+    // server time and the caller's own address, and the car's browser should
+    // need nothing but a URL to run them.
+    if (url.pathname === "/probe" && request.method === "GET") {
+      sendFile(response, "probe.html", "text/html; charset=utf-8", "no-store");
       return;
     }
-    if (!authorized && auth.presented) {
-      recordFailedAuth(ip);
-    } else if (authorized) {
-      clearFailedAuth(ip);
+    if (url.pathname === "/api/probe/poll" && request.method === "GET") {
+      sendJson(response, 200, {
+        server_time: new Date().toISOString(),
+        client_address: clientAddress(request),
+        event_number: Number(url.searchParams.get("event")) || 0,
+      });
+      return;
     }
-    route(request, response, url, auth);
+
+    // No token is accepted in plaintext anywhere. Over the network, every
+    // authenticated request arrives through /api/e2e (handled above) and gets
+    // its level from its session; the local Unix socket is control by
+    // construction (see config.localSocket). Everything else is anonymous.
+    route(request, response, url, { level: request.aircLocal ? "control" : "none" });
   }
 
   // Everything behind authentication, for a plaintext request (auth from its
@@ -1115,10 +1071,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     const authorized = auth.level !== "none";
     const canControl = auth.level === "control";
 
-    // /healthz now requires a token like every other endpoint; the local CLI
-    // authenticates its probe with the control token. This removes the previous
-    // reliance on the (proxy-spoofable) "no X-Forwarded-For + loopback peer"
-    // signal as an auth bypass.
+    // /healthz is authenticated like every other endpoint: the local CLI reaches
+    // it over the Unix socket. (Never "loopback with no X-Forwarded-For": a
+    // tunnel agent arrives from loopback too.)
     if (url.pathname === "/healthz") {
       if (!authorized) {
         notFound(response);
@@ -1133,15 +1088,6 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       return;
     }
 
-    const extraHeaders = {};
-    if (auth.token && tokenEquals(url.searchParams.get("k") || "", auth.token)) {
-      extraHeaders["Set-Cookie"] = authCookie(auth.token);
-    }
-
-    if (url.pathname === "/probe" && request.method === "GET") {
-      sendFile(response, "probe.html", "text/html; charset=utf-8", "no-store", extraHeaders);
-      return;
-    }
     if (url.pathname === "/api/config" && request.method === "GET") {
       sendJson(response, 200, {
         productName: config.productName,
@@ -1161,11 +1107,11 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
         authLevel: auth.level,
         publicUrl: currentPublicUrl() || "",
         lanUrls: localLanAddresses(config.port),
-      }, extraHeaders);
+      });
       return;
     }
     if (url.pathname === "/api/status" && request.method === "GET") {
-      sendJson(response, 200, statusPayload(), extraHeaders);
+      sendJson(response, 200, statusPayload());
       return;
     }
     if (url.pathname === "/api/pairing" && request.method === "GET") {
@@ -1173,7 +1119,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
         notFound(response);
         return;
       }
-      sendJson(response, 200, pairingPayload(config, currentPublicUrl() || "", tlsMaterial), extraHeaders);
+      sendJson(response, 200, pairingPayload(config, currentPublicUrl() || "", tlsMaterial));
       return;
     }
     if (url.pathname === "/api/tmux/frame" && request.method === "GET") {
@@ -1202,7 +1148,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       // View-level: seeing which panes need attention reveals no pane contents,
       // and auto mode must work for view-only clients. The poll fallback path
       // (no websocket) reads this.
-      sendJson(response, 200, { ok: true, items: attentionItems() }, extraHeaders);
+      sendJson(response, 200, { ok: true, items: attentionItems() });
       return;
     }
     if (url.pathname === "/api/agent/event" && request.method === "POST") {
@@ -1234,18 +1180,9 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
         notFound(response);
         return;
       }
-      sendJson(response, 200, { ok: true, ...dais.status(config) }, extraHeaders);
+      sendJson(response, 200, { ok: true, ...dais.status(config) });
       return;
     }
-    if (url.pathname === "/api/probe/poll" && request.method === "GET") {
-      sendJson(response, 200, {
-        server_time: new Date().toISOString(),
-        client_address: clientAddress(request),
-        event_number: Number(url.searchParams.get("event")) || 0,
-      });
-      return;
-    }
-
     if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "POST") {
       send(response, 405, "text/plain; charset=utf-8", "method not allowed\n");
       return;
@@ -1269,14 +1206,15 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
     readBody(request, isHandshake ? HANDSHAKE_LIMIT_BYTES : E2E_ENVELOPE_LIMIT)
       .then((body) => {
         if (isHandshake) {
-          // A failed handshake is a wrong token, so it feeds the same throttle.
-          if (rateLimited(ip)) {
-            notFound(response);
-            return;
-          }
+          // A failed handshake is a wrong token, so it feeds the throttle. The
+          // handshake is still tried while blocked: behind a tunnel every client
+          // shares the agent's address, and a block must never lock out a valid
+          // token (it costs one trial decryption per token, no DH).
           const result = e2e.handshake(body);
           if (!result) {
-            recordFailedAuth(ip);
+            if (!rateLimited(ip)) {
+              recordFailedAuth(ip);
+            }
             notFound(response);
             return;
           }
@@ -1396,30 +1334,13 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       rejectUpgrade(socket, 400);
       return;
     }
-    // Two kinds of socket: /api/tmux/ws authenticates by token up front;
-    // /api/e2e/ws carries no token and authenticates by its first message, a
-    // Noise handshake, after which every message is encrypted.
-    const encrypted = url.pathname === "/api/e2e/ws";
-    if (!encrypted && url.pathname !== "/api/tmux/ws") {
+    // The only socket: /api/e2e/ws carries no token and authenticates by its
+    // first message, a Noise handshake, after which every message is encrypted.
+    if (url.pathname !== "/api/e2e/ws") {
       rejectUpgrade(socket);
       return;
     }
     const ip = peerAddress(request);
-    const auth = encrypted ? { level: "pending" } : authLevel(request, url, config);
-    if (encrypted && rateLimited(ip)) {
-      rejectUpgrade(socket);
-      return;
-    }
-    if (auth.level === "none") {
-      if (auth.presented && !rateLimited(ip)) {
-        recordFailedAuth(ip);
-      }
-      rejectUpgrade(socket);
-      return;
-    }
-    if (!encrypted) {
-      clearFailedAuth(ip);
-    }
     if ((wsCounts.get(ip) || 0) >= WS_PER_IP_LIMIT) {
       log(`ws-limit: rejecting upgrade from ${ip} (>= ${WS_PER_IP_LIMIT} open)`);
       rejectUpgrade(socket, 400);
@@ -1430,26 +1351,17 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       rejectUpgrade(socket, 400);
       return;
     }
-    // Ciphertext doesn't compress, so the encrypted socket never negotiates it.
-    const deflate = !encrypted && negotiateDeflate(request.headers["sec-websocket-extensions"]);
-    const responseHeaders = [
+    socket.write([
       "HTTP/1.1 101 Switching Protocols",
       "Upgrade: websocket",
       "Connection: Upgrade",
       `Sec-WebSocket-Accept: ${websocketAccept(key)}`,
-    ];
-    if (deflate) {
-      responseHeaders.push(
-        "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover",
-      );
-    }
-    responseHeaders.push("\r\n");
-    socket.write(responseHeaders.join("\r\n"));
+      "\r\n",
+    ].join("\r\n"));
     wsSockets.add(socket);
     wsCounts.set(ip, (wsCounts.get(ip) || 0) + 1);
 
     const wsState = {
-      deflate,
       buffer: Buffer.alloc(0),
       pane: "",
       window: "",
@@ -1465,7 +1377,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       // pane on every (re)connect before the pin arrives.
       viewReady: false,
       attentionJson: "",
-      cipher: null, // encrypted socket: { send, receive } once the handshake is done
+      cipher: null, // { send, receive } once the handshake is done
     };
     const EMPTY_AD = Buffer.alloc(0);
 
@@ -1474,10 +1386,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
         return;
       }
       if (wsState.cipher) {
-        const sealed = wsState.cipher.send.send(EMPTY_AD, Buffer.from(JSON.stringify(payload)));
-        socket.write(websocketFrame(sealed, false, true));
-      } else {
-        socket.write(websocketFrame(JSON.stringify(payload), wsState.deflate));
+        socket.write(websocketFrame(wsState.cipher.send.send(EMPTY_AD, Buffer.from(JSON.stringify(payload)))));
       }
     }
 
@@ -1532,41 +1441,36 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
       // First frame is deferred until the client sends its `view` state, so we
       // never flash the active pane before a pin is known.
     }
-    if (encrypted) {
-      // A socket that never completes its handshake doesn't get to sit on a slot.
-      const deadline = setTimeout(() => {
-        if (!wsState.cipher) {
-          socket.destroy();
-        }
-      }, E2E_WS_HANDSHAKE_MS);
-      socket.once("close", () => clearTimeout(deadline));
-    } else {
-      start(auth.level);
-    }
+    // A socket that never completes its handshake doesn't get to sit on a slot.
+    const deadline = setTimeout(() => {
+      if (!wsState.cipher) {
+        socket.destroy();
+      }
+    }, E2E_WS_HANDSHAKE_MS);
+    socket.once("close", () => clearTimeout(deadline));
 
     // The encrypted socket's first message is Noise msg1. Answer with msg2 and
     // start; a wrong token counts against the throttle and closes the socket.
     function handshake(message) {
       const result = message.type === "binary" ? e2e.channel(message.data) : null;
       if (!result) {
-        recordFailedAuth(ip);
+        if (!rateLimited(ip)) {
+          recordFailedAuth(ip); // the same throttle as the HTTP handshake
+        }
         socket.end(websocketCloseFrame());
         return false;
       }
       clearFailedAuth(ip);
-      socket.write(websocketFrame(result.reply, false, true));
+      socket.write(websocketFrame(result.reply));
       wsState.cipher = { send: result.send, receive: result.receive };
       start(result.level);
       return true;
     }
 
-    // The JSON text of a client message, or null to ignore it. On the
-    // encrypted socket only binary messages that authenticate count, and one
-    // that doesn't ends the connection (the channel's counters can't recover).
+    // The JSON text of a client message, or null to ignore it. Only binary
+    // messages that authenticate count, and one that doesn't ends the
+    // connection (the channel's counters can't recover).
     function messageText(message) {
-      if (!encrypted) {
-        return message.type === "text" ? message.text : null;
-      }
       if (message.type !== "binary") {
         return null;
       }
@@ -1591,7 +1495,7 @@ function makeServer(config, ngrokStatus, currentPublicUrl, tlsMaterial = null) {
           socket.end(websocketCloseFrame());
           return;
         }
-        if (encrypted && !wsState.cipher) {
+        if (!wsState.cipher) {
           if (!handshake(message)) {
             return;
           }

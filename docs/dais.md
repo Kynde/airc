@@ -75,7 +75,7 @@ loop follows.
 Test it against a scratch tmux pane before an agent pane:
 
 ```sh
-curl -s -XPOST "http://127.0.0.1:8080/api/dais/dictate?k=$CONTROL" \
+curl -s --unix-socket ~/airc/.airc.sock -XPOST http://airc/api/dais/dictate \
   -d '{"target":"pane","paneId":"%19","action":"toggle"}'
 ```
 

@@ -44,10 +44,8 @@
   };
 
   // Pairing links carry the token in the fragment (#k=), which the browser
-  // never sends; an old ?k= link still works. Either way it moves to
-  // localStorage and out of the address bar.
-  const linkToken = new URLSearchParams(location.hash.slice(1)).get("k")
-    || new URLSearchParams(location.search).get("k");
+  // never sends. It moves to localStorage and out of the address bar.
+  const linkToken = new URLSearchParams(location.hash.slice(1)).get("k");
   if (linkToken) {
     localStorage.setItem("airc_token", linkToken);
     history.replaceState(null, "", location.pathname);

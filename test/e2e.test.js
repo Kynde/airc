@@ -23,6 +23,7 @@ before(async () => {
   fs.writeFileSync(configPath, JSON.stringify({
     viewToken: VIEW,
     controlToken: CONTROL,
+    tokenEpoch: 2,
     attention: { enabled: false },
     tunnels: { ngrok: { enabled: false } },
   }));

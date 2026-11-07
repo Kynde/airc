@@ -4,10 +4,11 @@ One line per term: `TERM :: definition`. Keep entries grep-friendly — a single
 line should carry the whole fact.
 
 viewToken :: token that can only view (frames/config/panes/status/health/attention); generated into config.json if absent. See [[controlToken]].
-controlToken :: token that can view AND send input + fetch pairing + post agent events; = a remote-shell credential because input is `tmux send-keys`. Falls back to a legacy `authToken` config key if present.
-weak token :: a configured non-empty viewToken/controlToken shorter than 32 chars is accepted but logged as a startup warning; only empty tokens are auto-generated. Clear the field to rotate to a strong token.
-authLevel :: src/auth.js resolves a presented token to one of `control` / `view` / `none`; the only auth primitive. `none` on a protected route returns 404, never 401 (don't advertise the surface).
-presented token :: the token from (in order) `?k=` query, `airc_auth`/`swyd_auth` cookie, `Authorization: Bearer`, `X-Airc-Auth`, or `X-Swyd-Auth` header. The `swyd_*` names are accepted for migration only.
+controlToken :: token that can view AND send input + fetch pairing + post agent events; = a remote-shell credential because input is `tmux send-keys`.
+weak token :: a viewToken/controlToken shorter than 22 chars (128 bits) makes the server refuse to start; clear the field to have a strong one generated.
+tokenEpoch :: config.json marker (currently 2); a config without it gets both tokens regenerated once, because tokens from before e2e crossed tunnels in plaintext.
+auth level :: `control` / `view` / `none`. Over the network it comes only from an e2e session (the token that completed the handshake, found by trial decryption in src/e2e.js); the local Unix socket `.airc.sock` is `control`; everything else is `none`. `none` on a protected route returns 404, never 401 (don't advertise the surface).
+e2e session :: Noise NNpsk0 session from `POST /api/e2e/hs`; requests are sealed envelopes to `POST /api/e2e`, the stream is `/api/e2e/ws`. No token is ever accepted in plaintext. See docs/e2e-encryption.md.
 canControl :: `/api/config` field telling the browser UI whether to show input controls; cosmetic — the server independently enforces controlToken on `/api/tmux/input`, `/api/pairing`, `/api/agent/event`.
 active pane :: the target when nothing is pinned; resolved as tmux target `=<session>:` and falls back across all configured sessions (sessions[0] first) so losing one session switches rather than blanks. See [[pin]].
 pin :: a concrete pane id like `%5` the client locks onto; stored client-side (browser localStorage / Android SharedPreferences). A vanished pin → server returns `pinValid=false` and the client reverts to active.

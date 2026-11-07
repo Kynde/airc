@@ -1,9 +1,10 @@
 # End-to-End Encryption Through HTTP Tunnels (design)
 
-Status: **design agreed, not implemented.** The decisions it rests on are
-listed at the end. This is a breaking change shipped as one cut-over: every
-client is reinstalled and re-paired afterwards, so there is no compatibility
-mode.
+Status: **implemented.** The server, the browser viewer and the Android app
+speak only this protocol, and no token is accepted in plaintext. The decisions
+it rests on are listed at the end. It shipped as one breaking cut-over: the
+server regenerates both tokens once (`tokenEpoch` in config.json), and every
+client is reinstalled and re-paired, so there is no compatibility mode.
 
 ## Why
 

@@ -98,7 +98,9 @@ After repeated unchanged frames the browser increases its interval up to
 
 WebSocket flow:
 
-1. Browser connects to `/api/tmux/ws?k=<token>`.
+1. Browser connects to `/api/e2e/ws` and completes the Noise handshake (its
+   first message); every message after is encrypted. See
+   [e2e-encryption.md](e2e-encryption.md).
 2. Browser sends view state: pinned pane and optional viewport cols/rows.
 3. Server captures frames on the configured poll interval.
 4. Changed frames are sent as the same JSON shape as `/api/tmux/frame`.

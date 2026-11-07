@@ -117,24 +117,28 @@ function parseArgs(argv) {
   return args;
 }
 
-// 24 random bytes → 32 base64url chars. Tokens shorter than this over a public
-// endpoint are brute-forceable, so configured tokens below it are flagged.
-const MIN_TOKEN_LENGTH = 32;
-
+// 24 random bytes → 32 base64url chars (192 bits).
 function generateToken() {
   return crypto.randomBytes(24).toString("base64url");
 }
 
-// Surface weak configured tokens at load time without ever printing the value.
-// Returns warning strings; the caller decides how to emit them.
-function tokenWarnings(config) {
-  const warnings = [];
-  for (const [name, value] of [["controlToken", config.controlToken], ["viewToken", config.viewToken]]) {
-    if (typeof value === "string" && value.length > 0 && value.length < MIN_TOKEN_LENGTH) {
-      warnings.push(`${name} is only ${value.length} chars; use >= ${MIN_TOKEN_LENGTH} (clear it in config.json to auto-generate a strong one)`);
+// A recorded handshake lets anyone test token guesses offline
+// (docs/e2e-encryption.md), so a short token is refused outright rather than
+// warned about: 22 base64url chars is 128 bits.
+const MIN_TOKEN_LENGTH = 22;
+
+// Bumped when every existing token must be treated as exposed. Epoch 2: the
+// end-to-end layer. Before it, tokens crossed tunnels in plaintext on every
+// request, so a config from before is given fresh tokens once.
+const TOKEN_EPOCH = 2;
+
+function checkTokenStrength(config) {
+  for (const name of ["controlToken", "viewToken"]) {
+    const value = config[name];
+    if (typeof value !== "string" || value.length < MIN_TOKEN_LENGTH) {
+      throw new Error(`${name} must be at least ${MIN_TOKEN_LENGTH} characters (clear it in config.json to generate a strong one)`);
     }
   }
-  return warnings;
 }
 
 // Base64 of the cert's DER SHA-256 — the value the app pins. Computed from the
@@ -349,11 +353,24 @@ function loadConfig(argv) {
   }
 
   const persisted = { ...fileConfig };
+  const warnings = [];
   let changed = false;
+  if (fileConfig.tokenEpoch !== TOKEN_EPOCH) {
+    // Fresh tokens, once, for a config from before this epoch (or a new one).
+    const hadTokens = Boolean(fileConfig.controlToken || fileConfig.viewToken || fileConfig.authToken);
+    config.controlToken = "";
+    config.viewToken = "";
+    delete persisted.authToken;
+    persisted.tokenEpoch = TOKEN_EPOCH;
+    changed = true;
+    if (hadTokens) {
+      warnings.push("tokens regenerated for end-to-end encryption; the old ones are void. Re-pair every client (tools/airc pair-app, tools/airc pair-web)");
+    }
+  }
+  delete config.authToken;
+  delete config.tokenEpoch;
   if (!config.controlToken) {
-    config.controlToken = typeof fileConfig.authToken === "string" && fileConfig.authToken
-      ? fileConfig.authToken
-      : generateToken();
+    config.controlToken = generateToken();
     persisted.controlToken = config.controlToken;
     changed = true;
   }
@@ -378,7 +395,7 @@ function loadConfig(argv) {
   // open it (0600), and no tunnel can reach it. Derived, never persisted.
   config.localSocket = path.join(path.dirname(path.resolve(configPath)), ".airc.sock");
 
-  const warnings = tokenWarnings(config);
+  checkTokenStrength(config);
   const tls = ensureTlsMaterials(config, warnings);
 
   return { config, flags: args.flags, configPath, warnings, tls };
@@ -455,7 +472,6 @@ module.exports = {
   publicBaseUrl,
   advertisedUrl,
   tunnelUrl,
-  tokenWarnings,
   TUNNEL_NAMES,
   DEFAULT_CONFIG_PATH,
 };

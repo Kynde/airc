@@ -9,6 +9,7 @@ Read in this order when picking up the project:
 5. [Tesla Browser Findings](tesla-browser.md)
 6. [Speaking A Prompt (dais)](dais.md)
 7. [Future Work](future-work.md)
+8. [End-to-End Encryption Through Tunnels (design)](e2e-encryption.md)
 
 The root [README](../README.md) stays short and welcoming;
 [INSTALLATION](../INSTALLATION.md) holds setup details (prerequisites, ngrok,

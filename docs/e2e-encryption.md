@@ -1,7 +1,9 @@
 # End-to-End Encryption Through HTTP Tunnels (design)
 
-Status: **proposal, not implemented.** Nothing here has shipped. The open
-questions at the end need decisions before work starts.
+Status: **design agreed, not implemented.** The decisions it rests on are
+listed at the end. This is a breaking change shipped as one cut-over: every
+client is reinstalled and re-paired afterwards, so there is no compatibility
+mode.
 
 ## Why
 
@@ -28,6 +30,7 @@ Airc server.
 | A recorded session, decrypted after the token later leaks | **Protected** (forward secrecy) | **Protected** (forward secrecy) |
 | Replay of a captured request (e.g. a second "Enter") | **Protected** | **Protected** |
 | Wi-Fi sniffer on the LAN | Protected (already pinned TLS) | **Protected** (new) |
+| Cross-site page forging requests (CSRF) or opening the WebSocket | **Protected** | **Protected** (new) |
 | Compromised laptop or phone | No | No |
 
 Why the browser can't be protected against a tampering tunnel: the tunnel also
@@ -135,8 +138,9 @@ then binary transport messages, each with an implicit counter (WS is ordered)
 - **Its own handshake per connection,** so no key or nonce space is shared with
   HTTP sessions.
 - **Inside:** today's JSON messages (`hello`, `view`, frames) unchanged.
-- **No `permessage-deflate`.** Ciphertext doesn't compress, so the extension is
-  not negotiated on this path. See the compression question below.
+- **No compression.** Ciphertext doesn't compress, so `permessage-deflate` is
+  not negotiated on this path, and nothing is compressed before encrypting
+  either (decided; revisit only if mobile bandwidth becomes a problem).
 
 ### Sessions
 
@@ -144,16 +148,20 @@ then binary transport messages, each with an implicit counter (WS is ordered)
 - Idle expiry 15 minutes, absolute expiry 24 hours, total count capped.
 - **Weak tokens:** a recorded handshake lets an attacker test guesses offline. A
   random 24-byte token makes that infeasible, but a short user-chosen one does
-  not. With E2E enabled, the server refuses tokens shorter than 128 bits rather
-  than only warning about them.
+  not. The server refuses to start with a token shorter than 128 bits, where
+  today it only warns.
 
 ## Clients
 
 ### Android
 
-- Pairing payload gains `e2e: 1`.
-- **No plaintext fallback:** once paired with an E2E server, the app never sends
-  its token in plaintext and has no plaintext mode to fall back to.
+- **No plaintext path at all.** The app never sends its token, on any route.
+- **Built-in crypto only, `minSdk` 26 → 33 (Android 13).** Android's own
+  providers have everything from API 33: X25519 as `XDH` in `KeyPairGenerator`,
+  `KeyAgreement` and `KeyFactory` (33+), `ChaCha20/Poly1305/NoPadding` (28+),
+  and `HmacSHA256` (1+), per the Android reference pages. So no crypto library
+  is added. A raw 32-byte peer key is imported by prefixing the fixed X25519
+  SPKI header and using `X509EncodedKeySpec`.
 - **One code path for LAN and tunnel:** a single `E2eSession` wraps all HTTP
   calls and the OkHttp WebSocket. On the LAN the session runs inside the
   existing pinned TLS; through a tunnel, inside the tunnel's HTTPS.
@@ -173,7 +181,15 @@ then binary transport messages, each with an implicit counter (WS is ordered)
   LAN.
 - **Tesla:** Chrome 140 (see `tesla-browser.md`) runs these libraries without
   issue. The car only reaches Airc through a tunnel anyway.
-- The cookie and `?k=` paths go away in E2E mode.
+- The `airc_auth` cookie and `?k=` go away. With no ambient credential left, a
+  cross-site page can't forge input or open the WebSocket (CSRF and
+  cross-site WebSocket hijacking), and no `Origin` or `Content-Type` checks
+  are needed to stop it.
+- `/probe` (the car diagnostics page) and `/api/probe/poll` currently
+  authenticate through that cookie. They move ahead of the auth check and
+  become public. They only return the server time and the caller's own
+  address, and this way they keep working in the car without the encryption
+  client.
 
 ### Local tools (CLI, agent hooks)
 
@@ -184,21 +200,23 @@ address from the local agent, so the server can't distinguish "local tool" from
 (`.airc.sock`, mode `0600`), where file permissions are the authentication and
 no tunnel can reach it. Hooks switch to `curl --unix-socket`.
 
-## Rollout
+## Rollout: one cut-over
 
-New config key `e2e`: `"off"` | `"allow"` | `"require"`.
+No config switch and no transition mode: the HTTP listener stops accepting
+plaintext tokens altogether, in every form (`?k=`, cookie, `Authorization`,
+`X-Airc-Auth`). Work proceeds in this order, on a branch, and merges when all
+three clients work:
 
-1. **Shared core plus server, in `allow` mode.** The Noise core is one JS module
-   used by both the server and the browser. It's checked against the published
-   test vectors. The server adds the `/api/e2e*` endpoints and the Unix socket.
-   Plaintext auth keeps working.
+1. **Shared core and server.** The Noise core is one JS module used by both the
+   server and the browser, checked against the published test vectors. The
+   server gains the `/api/e2e*` endpoints and the Unix socket, and loses
+   plaintext token auth.
 2. **Android.** A Kotlin Noise core passing the same vectors in JVM unit tests,
-   then `E2eSession`, then `e2e: 1` in pairing. Re-pair once.
+   then `E2eSession` for all calls, and `minSdk` 33.
 3. **Browser.** The fragment token, the vendored libraries, and the client.
-4. **`require` becomes the default.** Plaintext tokens on the HTTP listener are
-   refused. A plaintext token that does arrive is logged loudly with "rotate this
-   token," since it has already crossed the tunnel. `allow` remains an explicit
-   opt-in for old clients.
+4. **Fresh tokens.** On upgrade the server **regenerates both tokens**. The old
+   ones have crossed ngrok in plaintext for as long as the tunnel has been in
+   use, so they must be treated as exposed. Then every client is re-paired.
 
 ## Testing
 
@@ -215,26 +233,42 @@ New config key `e2e`: `"off"` | `"allow"` | `"require"`.
 - **In the car:** the Tesla over the tunnel, where frame latency must stay
   acceptable.
 
-## Open questions
+## Decisions
 
-1. **Android crypto provider.** The app's `minSdk` is 26 (Android 8). Built-in
-   Android support for X25519 and ChaCha20-Poly1305 arrived in later releases;
-   the exact API levels are still to be checked. The options are a library
-   (Tink's primitives or BouncyCastle's lightweight API), or raising `minSdk`.
-   Recommendation: one small library, keeping `minSdk`.
-2. **Compression.** Compressing before encrypting saves bandwidth on mobile
-   data, but sizes can leak content if an attacker can both inject text into the
-   terminal and watch sizes (the CRIME/BREACH pattern). Recommendation: compress
-   frames only, never anything carrying a secret. Or skip compression until
-   bandwidth shows up as a problem.
-3. **Server identity.** With `NNpsk0`, anyone holding a token can act as the
-   server toward clients that use the same token. A shared view link therefore
-   lets its holder, if they also control the tunnel, show fake screens to
-   view-only clients. Adding a server static key to the QR and fragment
-   (`NKpsk0`) closes this. Recommendation: start with `NNpsk0`, which can be
-   upgraded later.
-4. **End state.** Should `require` be the default for everyone, or only once the
-   app and browser both ship?
-5. **Token rotation.** Long-lived tokens become key material. A `tools/airc
-   rotate-tokens` command (already in `future-work.md`) matters more than
-   before.
+1. **Android crypto:** raise `minSdk` to 33 and use only the platform
+   providers. No library.
+2. **Compression:** none for now.
+3. **Server identity:** `NNpsk0` now. With it, anyone holding a token can act as
+   the server toward clients using the same token, so a shared view link lets
+   its holder, if they also control the tunnel, show fake screens to view-only
+   clients. Adding a server static key to the QR and fragment (`NKpsk0`) closes
+   this later without other protocol changes.
+4. **End state:** encryption is mandatory from the start, with no plaintext mode.
+
+## Related findings from the security reviews
+
+From the two earlier reviews, how each item relates to this design:
+
+- **Fixed already, independent of this:**
+  - the pre-auth crash on a malformed Host;
+  - the app accepting tunnel-supplied endpoints;
+  - unbounded WebSocket decompression;
+  - the forgeable `X-Forwarded-For` throttle and its unbounded map;
+  - Android backup of the token;
+  - ngrok's local inspector recording requests, now `--inspect=false`.
+- **Closed by this design:** CSRF and cross-site WebSocket access (no ambient
+  credentials remain); the token sniffable on LAN HTTP; the token in ngrok's or
+  any forwarder's logs.
+- **Decided, unchanged:**
+  - Configured `sessions` stay a navigation default, not an access limit.
+  - The failed-auth throttle keeps dropping only wrong attempts, so one attacker
+    behind a shared tunnel address can't lock the owner out. With 192-bit tokens
+    it's resource hygiene, not brute-force protection.
+- **Still open, outside this design:**
+  - `tools/airc rotate-tokens` (in `future-work.md`). It matters more once
+    tokens are long-lived key material.
+  - `.airc-server.log` is never rotated and records every request with its
+    address.
+  - `0.0.0.0` binding also exposes the listener on VPN and Docker interfaces.
+    Only the handshake endpoint is reachable there without a token, but binding
+    to the LAN address would be tidier.
